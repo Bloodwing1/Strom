@@ -260,7 +260,11 @@ def find_heating_decision(temp_price_df, type = "optimal", decision = 'relaxed',
     indoor_temp = indoor_temperature.value
     return decision, indoor_temp
 
-def compare_decision_costs(temp_price_df):
+def compare_decision_costs(temp_price_df,
+                            heat_loss = 0.1,  # Heat loss rate per degree difference per hour
+                            heating_power = 2,  # Heating rate (degrees per hour)
+                            min_temperature = 18,  # Minimum temperature constraint (°C)
+                           ):
     """
     Compares the costs of the optimal and baseline heating decisions for a given day.
     Parameters:
@@ -271,8 +275,15 @@ def compare_decision_costs(temp_price_df):
     tuple: A tuple containing the costs of the optimal and baseline heating decisions.
     """
     # Get the optimal heating decision
-    optimal_decision, optimal_indoor_temperature  = find_heating_decision(temp_price_df, type = "optimal")
-    baseline_decision, baseline_indoor_temperature = find_heating_decision(temp_price_df, type = "baseline")
+    optimal_decision, optimal_indoor_temperature  = find_heating_decision(temp_price_df, type = "optimal",
+                                                                        heat_loss = heat_loss,
+                                                                        heating_power = heating_power,
+                                                                        min_temperature = min_temperature)
+    
+    baseline_decision, baseline_indoor_temperature = find_heating_decision(temp_price_df, type = "baseline",
+                                                                        heat_loss = heat_loss,
+                                                                        heating_power = heating_power,
+                                                                        min_temperature = min_temperature)
 
     # Calculate the cost of the optimal decision
     optimal_cost= temp_price_df["Price"] * optimal_decision
