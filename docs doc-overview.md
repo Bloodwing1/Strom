@@ -1,4 +1,4 @@
-# Strom Price Prediction and Decision System Documentation
+# Strom Price Prediction and Decision System DeepSeek 7B Documentation
 
 ## Overview
 The Strom Price Prediction and Decision System is a Python-based application designed to analyze energy prices and provide optimal heating decisions. This documentation provides guidance on how to use, configure, and extend the system.
