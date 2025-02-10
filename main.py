@@ -13,33 +13,64 @@ email = os.getenv("EMAIL")  # Get email from the environment variable
 password = os.getenv("PASSWORD")  # Get password from the environment variable
 
 async def main():
+    """Main function to control smart device with enhanced error handling"""
     try:
-        # Discover the device
-        dev = await Discover.discover_single(device_ip, username=email, password=password)
+        logger.info("Starting main function")
+        
+        # Load environment variables first
+        env_content = await load_env_vars()
         temp_price_df = utils.get_temp_price_df()
-        # Prompt the user for input (0 for off, 1 for on)
-        user_input = bool(utils.find_heating_decision(temp_price_df, decision = 'discrete')[0][0])
-        # Check user input and turn the light on or off accordingly
-        print(user_input)
-        if user_input:
-            await dev.turn_on()
-            print("Device turned on.")
-        else:
-            await dev.turn_off()
-            print("Device turned off.")
+        # Get user input with error handling
+        try:
+            user_input = bool(
+                utils.find_heating_decision(
+                    temp_price_df,
+                    decision='discrete',
+                    heat_loss=0.1,
+                    heating_power=2,
+                    min_temperature=18
+                )[0]
+            )
+        except Exception as e:
+            logger.error(f"Error in finding heating decision: {e}")
+            raise
+        # Execute device actions with error handling
+        try:
+            if user_input:
+                logger.info("User selected to turn device ON")
+                await dev.turn_on()
+                print("Device turned on.")
+            else:
+                logger.info("User selected to keep device OFF")
+                await dev.turn_off()
+                print("Device turned off.")
+        except Exception as e:
+            logger.error(f"Failed to execute device action: {e}")
+            raise
        # else:
         #    print("Invalid input. Please enter 0 or 1.")
 
-        # Update the device state after action
-        await dev.update()
-        print(f"Device state: {'ON' if dev.is_on else 'OFF'}")
+        # Update device state with error handling
+        try:
+            logger.info("Updating device state")
+            await dev.update()
+            print(f"Device state: {'ON' if dev.is_on else 'OFF'}")
+        except Exception as e:
+            logger.error(f"Failed to update device state: {e}")
+            raise
 
-        # Close the device connection manually
-        await dev.async_close()
-        print("Device connection closed.")
+        # Close device connection with error handling
+        try:
+            logger.info("Closing device connection")
+            await dev.async_close()
+            print("Device connection closed successfully.")
+        except Exception as e:
+            logger.error(f"Failed to close device connection: {e}")
+            raise
 
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Main function error: {e}")
+        raise
 
 
 if __name__ == "__main__":
