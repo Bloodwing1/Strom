@@ -58,45 +58,41 @@ WEATHER_FOLDER = BASEPATH + '/weather/'
    ```
 
 ### API Reference
-#### endpoints:
-- `/get-prices`: Retrieves historical price data
-- `/get-temperature-data`: Gets temperature records
-- `/make-decision`: Generates optimal heating strategy
+
+The system provides three main API endpoints for interacting with the Strom pricing and weather data:
+
+1. `/get-prices`
+   - Returns historical price data for a given date range
+   - Accepts start_date and end_date parameters (e.g., `2024-01-01` to `2024-12-31`)
+
+2. `/get-temperature-data`
+   - Retrieves temperature records over time
+   - Requires temp_folder path pointing to temperature data files
+
+3. `/make-decision`
+   - Generates optimal heating strategy based on price and weather data
+   - Uses heat_loss, heating_power, and min_temperature parameters
 
 ## Examples
 
 ### Example 1: Basic Usage
 ```python
-import strom.utils as utils
-
 # Get prices for last year
-prices = utils.get_prices(start_date='2023-12-01', end_date='2024-01-01')
+prices = """<code>import strom.utils as utils</code>
+prices = utils.get_prices(start_date='2023-12-01', end_date='2024-01-01')</code>
 
-# View results
-print(prices)
+print(prices)"""
 ```
 
-### Example 2: Custom Configuration
-```python
-import strom.utils as utils
+## Getting Started
 
-config = {
-    'API_KEY': 'your_api_key_here',
-    'BASEPATH': '/path/to/your/directory'
-}
+The Strom Price Prediction System can be initialized with:
 
-utils.setup_config(config)
+```bash
+python setup.py develop
 ```
 
-## Development
-- Create `setup.py` and install dependencies:
-  ```bash
-  pip install -r requirements.txt
-  ```
-- Initialize repository:
-  ```bash
-  python setup.py develop
-  ```
+This will set up the environment and prepare you for using the system's features.
 
 ## Troubleshooting
 1. Ensure API key is valid and stored securely
