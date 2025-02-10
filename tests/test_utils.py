@@ -1,4 +1,18 @@
-from strom import utils
+import pytest
+import logging
+
+# Configure logging for tests
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(' Strom Utils Tests')
+
+from Strom.utils import (
+    get_weather_data,
+    get_prices,
+    join_data,
+    find_heating_decision,
+    compare_decision_costs,
+    plot_costs_and_temps
+)
 
 def test_get_api_key():
     test_key_path = './tests/test_price_api_key.txt'
@@ -6,6 +20,17 @@ def test_get_api_key():
     assert api_key == 'test123'
 
 def test_get_weather_data():
+    """Test the weather data fetching functionality with proper error handling"""
+    with pytest.raises(Exception) as exc_info:
+        get_weather_data()
+    
+    # Verify the error was logged properly
+    logger = logging.getLogger(' Strom Utils')
+    assert 'Error: API request failed' in str(exc_info.value)
+    assert len(logger.messages) >= 1
+
+    # Verify logs are captured by test runner
+    assert len(pytest capfd.get_output().stderr_lines) > 0
     df = utils.get_weather_data()
     assert df.shape[1] == 1
     assert df.shape[0] == 24

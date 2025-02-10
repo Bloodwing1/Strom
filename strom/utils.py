@@ -1,6 +1,8 @@
+# Core imports
 import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
+import logging
 
 import requests
 from datetime import datetime
@@ -51,6 +53,57 @@ def get_api_key(key_path):
     return api_key
 
 def get_weather_data():
+    """
+    Fetches weather data for Barcelona from the OpenWeatherMap API, processes it, and returns a DataFrame with hourly temperature data.
+    
+    Returns:
+        pd.DataFrame: A DataFrame with two columns:
+            - 'Timestamp': Timestamps in the 'Europe/Madrid' timezone.
+            - 'Temperature (°C)': Temperatures in Celsius.
+    """
+    try:
+        # Existing weather data processing logic
+        time_steps = 24  # 24 hours in a day
+
+        # OpenWeatherMap API key
+        with open('./config/weather_api_key.txt') as f:
+            API_KEY = f.read().strip()
+
+        call_str = "https://api.openweathermap.org/data/2.5/forecast?q=Barcelona&appid=" + API_KEY
+        
+        # Make the API call
+        response = requests.get(call_str)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Prepare lists for timestamps and temperatures
+            timestamps = [
+                pd.Timestamp(entry['dt'], unit='s', tz='UTC').tz_convert('Europe/Madrid')
+                for entry in data['list']
+            ]
+            temperatures = [entry['main']['temp'] for entry in data['list']]
+            
+            # Create a DataFrame
+            temp_df = pd.DataFrame({
+                'Timestamp': timestamps,
+                'Temperature (K)': temperatures
+            })
+            
+            # Convert temperature from Kelvin to Celsius
+            temp_df['Temperature (°C)'] = temp_df['Temperature (K)'] - 273.15
+            # Remove the temperature in Kelvin
+            temp_df = temp_df.drop(columns=['Temperature (K)'])
+            
+            return temp_df
+            
+        else:
+            logger.error(f"Error: API request failed with status code {response.status_code}")
+            raise Exception("Failed to fetch weather data")
+        
+    except Exception as e:
+        logger.error(f"Error in get_weather_data(): {str(e)}")
+        raise
     """
     Fetches weather data for Barcelona from the OpenWeatherMap API, processes it, and returns a DataFrame with hourly temperature data.
     The function performs the following steps:
