@@ -25,12 +25,13 @@ def test_get_weather_data():
         get_weather_data()
     
     # Verify the error was logged properly
-    logger = logging.getLogger(' Strom Utils')
+    logger = logging.getLogger('strom.utils')
     assert 'Error: API request failed' in str(exc_info.value)
     assert len(logger.messages) >= 1
 
-    # Verify logs are captured by test runner
-    assert len(pytest capfd.get_output().stderr_lines) > 0
+    # Verify logs are captured by test runner using capfd
+    from pytest import capfd
+    assert len(capfd.get_output().stderr_lines) > 0
     df = utils.get_weather_data()
     assert df.shape[1] == 1
     assert df.shape[0] == 24

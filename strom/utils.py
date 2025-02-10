@@ -1,7 +1,16 @@
 # Core imports
+# Core imports
 import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
+import logging
+
+# Configure logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 import logging
 
 import requests
@@ -98,11 +107,11 @@ def get_weather_data():
             return temp_df
             
         else:
-            logger.error(f"Error: API request failed with status code {response.status_code}")
+            logger.error(f"API request failed with status code {response.status_code}")
             raise Exception("Failed to fetch weather data")
         
     except Exception as e:
-        logger.error(f"Error in get_weather_data(): {str(e)}")
+        logger.error(f"Error in get_weather_data(): {str(e)}", exc_info=True)
         raise
     """
     Fetches weather data for Barcelona from the OpenWeatherMap API, processes it, and returns a DataFrame with hourly temperature data.
