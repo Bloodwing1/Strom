@@ -1,8 +1,17 @@
 # Core imports
 # Core imports
+# Core imports
 import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
+import logging
+
+# Configure logger
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 import logging
 
 # Configure logger

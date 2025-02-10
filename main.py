@@ -1,3 +1,4 @@
+# Core imports
 import asyncio
 from kasa import Discover
 from dotenv import load_dotenv
