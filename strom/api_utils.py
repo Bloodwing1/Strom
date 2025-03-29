@@ -62,7 +62,7 @@ def fetch_city_weather(city: str = "Barcelona, ES") -> pd.DataFrame:
     weather_data = [(pd.Timestamp(entry['dt'], unit='s', tz='UTC').tz_convert('Europe/Madrid'),
                      entry['main']['temp'] - 273.15) for entry in data['list']]
     
-    df = pd.DataFrame(weather_data, columns=['Timestamp', 'Temperature (°C)'])
+    df = pd.DataFrame(weather_data, columns=['Timestamp', 'Exterior Temperature'])
     return interpolate_hourly_data(df, 24)
 
 def interpolate_hourly_data(df: pd.DataFrame, hours: int) -> pd.DataFrame:

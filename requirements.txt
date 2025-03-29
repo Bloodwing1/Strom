@@ -1,9 +1,11 @@
-cvxpy==1.6.0
+beautifulsoup4==4.13.3
+cvxpy==1.6.4
 entsoe-py==0.6.18
-matplotlib==3.10.0
-numpy==2.2.1
+matplotlib==3.10.1
+numpy==2.2.4
 pandas==2.2.3
 pytest==8.3.4
-python-dotenv==1.0.1
+plotly==6.0.1
+python-dotenv==1.1.0
 python-kasa==0.10.2
-requests==2.32.3
+Requests==2.32.3

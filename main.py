@@ -22,7 +22,7 @@ async def main():
         dev = await Discover.discover_single(device_ip, username=email, password=password)
         temp_price_df = get_temp_price_df()
         # Prompt the user for input (0 for off, 1 for on)
-        user_input = bool(optimization_utils.find_heating_decision(temp_price_df, decision = 'discrete')[0][0])
+        user_input = bool(optimization_utils.find_heating_output(temp_price_df, output = 'discrete')[0][0])
         # Check user input and turn the light on or off accordingly
         print(user_input)
         if user_input:
