@@ -57,7 +57,7 @@ def test_get_temp_price_df():
 
 def test_compare_output_costs():
     temp_price_df = get_temp_price_df()
-    house = optimization_utils.House(P_base=0.0)
+    house = optimization_utils.House(P_base=0.0, Q_cooling=2.0)
     optimal_state_df, baseline_state_df = optimization_utils.compare_output_costs(temp_price_df, house)
     assert baseline_state_df.isnull().values.any() == False
     assert optimal_state_df.isnull().values.any() == False

@@ -8,7 +8,7 @@ import cvxpy as cp
 
 class House:
     def __init__(self, C_air=0.56, C_wall=3.5, R_interior=1.0,
-                R_exterior=6.06, Q_heater=2.0, T_min=18.0, 
+                R_exterior=6.06, Q_heater=2.0, Q_cooling=0.0, T_min=18.0, 
                 T_max=24.0, T_interior_init = 18.5,
                 T_wall_init = 18.5, P_base = 0.01,  freq='1h'):
         
@@ -17,6 +17,7 @@ class House:
         self.R_interior = R_interior
         self.R_exterior= R_exterior
         self.Q_heater=Q_heater
+        self.Q_cooling=Q_cooling
         self.freq=freq
         self.T_min=T_min
         self.T_max=T_max
@@ -42,8 +43,16 @@ def find_heating_output(temp_price_df, house, heating_mode):
     
     # Initialize CVXPY variables
     heater_output = cp.Variable(time_steps)
-    constraints = [heater_output >= 0.0, heater_output <= 1.0]
-    
+    cooling_output = cp.Variable(time_steps)
+
+    constraints = []
+
+    constraints.append(heater_output >= 0.0)
+    constraints.append(heater_output <= 1.0)
+
+    constraints.append(cooling_output >= 0.0)
+    constraints.append(cooling_output <= 1.0)
+
     # Define the state vector variable: T[0,:] = T_interior, T[1,:] = wall_temperature
     T = cp.Variable((2, time_steps))
 
@@ -60,7 +69,7 @@ def find_heating_output(temp_price_df, house, heating_mode):
     # Dynamics constraints: For each time step, T[t+1] = T[t] + dt * (A @ T[t] + b_t)
     for t in range(time_steps - 1):
         b_t = cp.vstack([
-            house.Q_heater * heater_output[t] / house.C_air,
+            (house.Q_heater * heater_output[t] - house.Q_cooling * cooling_output[t]) / house.C_air,
             T_exterior.iloc[t] / (house.R_exterior * house.C_wall)
         ])
         constraints.append( T[0, t + 1] == T[0, t] + dt * (A[0,0] * T[0, t] + A[0,1] * T[1, t] + b_t[0]) )
@@ -72,7 +81,7 @@ def find_heating_output(temp_price_df, house, heating_mode):
     
     # Objective function
     if heating_mode == "optimal":
-        obj = cp.sum(cp.multiply(state_df["Price"], dt * house.Q_heater * heater_output ))
+        obj = cp.sum(cp.multiply(state_df["Price"], dt * (house.Q_heater * heater_output+house.Q_cooling *cooling_output) ))
     elif heating_mode == "baseline":
         obj = cp.sum(cp.square(house.T_min - T[0, :]))  # Interior temperature squared error
     objective = cp.Minimize(obj)
