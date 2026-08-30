@@ -58,6 +58,8 @@ class FakePlug:
 
     async def update(self) -> None:
         self.calls.append("update")
+        if self.fail_on and (exc := self.fail_on("update")):
+            raise exc
 
     async def async_close(self) -> None:
         self.calls.append("async_close")
