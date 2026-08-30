@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "strom"
+version = "0.2.0"
+description = "Smart heating: cost-optimal control against weather forecasts and day-ahead electricity prices"
+readme = "README.md"
+authors = [{ name = "Strom contributors" }]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "beautifulsoup4>=4.13",
+    "cvxpy>=1.6,<2",
+    "entsoe-py>=0.6.18",
+    "matplotlib>=3.10",
+    "numpy>=2.2",
+    "pandas>=2.2",
+    "plotly>=6.0",
+    "python-dotenv>=1.1",
+    "python-kasa>=0.10.2",
+    "Requests>=2.32",
+    "scipy>=1.15",
+]
+
+[project.optional-dependencies]
+dev = [
+    "flake8>=7",
+    "mypy>=1.14",
+    "mutmut>=3",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "pytest-cov>=6",
+    "pytest-timeout>=2.3",
+    "types-requests",
+]
+
+[project.scripts]
+strom = "strom.cli:run"
+
+[tool.setuptools]
+packages = ["strom"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = '-m "not integration" --timeout=120'
+markers = [
+    "integration: live provider/device tests (excluded from the default gate)",
+]
+
+[tool.coverage.run]
+source = ["strom"]
+omit = ["strom/plot_utils.py"]
+
+[tool.mutmut]
+# The whole package is copied into the mutation sandbox so imports keep
+# working, but only the safety-critical modules are actually mutated.
+source_paths = ["strom"]
+only_mutate = ["strom/control.py", "strom/optimization_utils.py"]
+pytest_add_cli_args = ["-q"]
+pytest_add_cli_args_test_selection = [
+    "tests/test_actuation.py",
+    "tests/test_controller.py",
+    "tests/test_optimizer.py",
+    "tests/test_metamorphic.py",
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["strom"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+no_implicit_optional = true
+warn_unused_ignores = true

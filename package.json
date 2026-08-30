@@ -1,0 +1,11 @@
+{
+  "name": "strom",
+  "private": true,
+  "description": "Git hook tooling (husky) for the Strom Python project; application code is Python.",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

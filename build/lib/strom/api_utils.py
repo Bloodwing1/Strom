@@ -42,7 +42,7 @@ WEATHER_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
 #: (connect, read) timeouts in seconds for every HTTP request.
 WEATHER_TIMEOUT: tuple[float, float] = (5.0, 15.0)
-PRICE_TIMEOUT_SECONDS = 30  # entsoe-py declares timeout as Optional[int]
+PRICE_TIMEOUT_SECONDS = 30.0
 
 #: Bounded retry policy for transient failures.
 MAX_ATTEMPTS = 3
@@ -89,6 +89,18 @@ def _retry_loop(
             if not transient or last:
                 raise on_error(exc, transient) from exc
             sleep(backoff_seconds * (2 ** attempt))
+
+
+def find_root_dir(target_folder: str = "Strom") -> str:
+    current_dir = os.getcwd()
+    parent_dir = current_dir
+
+    while parent_dir == current_dir or current_dir != '/':
+        if target_folder in os.listdir(current_dir):
+            return os.path.abspath(os.path.join(current_dir, target_folder))
+        current_dir = os.path.dirname(current_dir)
+
+    raise FileNotFoundError(f"'{target_folder}' folder not found in directory tree")
 
 
 def find_config_file(name: str) -> Path:
