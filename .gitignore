@@ -17,4 +17,6 @@ plots/*
 .aider*
 .mutmut-cache
 /mutants/
-/node_modules/
+/node_modules//build/
+/.coverage
+/dist/
