@@ -3,6 +3,12 @@ from kasa import Discover
 from dotenv import load_dotenv
 import os
 import json
+import pandas as pd
+from strom.control import (
+    SystemClock,
+    execute_plan,
+    plan_from_schedule,
+)
 from strom.data_utils import get_temp_price_df
 from strom.optimization_utils import find_heating_output, House
 
@@ -36,30 +42,34 @@ def setup_env_config():
 
     return email, password, device_ip, house
 
-async def main(email, password, device_ip, house):
+async def main(email, password, device_ip, house, clock=None):
+    from strom.control import MaxOnWatchdog
+
+    clock = clock or SystemClock()
+
     try:
         # Discover the devices
         if not device_ip:
             raise ValueError("DEVICEIP environment variable is not set or is invalid.")
         dev = await Discover.discover_single(device_ip, username=email, password=password)
         temp_price_df = get_temp_price_df()
-        # Prompt the user for input (0 for off, 1 for on)
-        user_input_df = find_heating_output(temp_price_df, house, 'optimal')
-        user_input_val = user_input_df['HeaterOutput'].iloc[0]
-        user_input = bool(user_input_val)  # Convert to boolean
+        # Resolve the control policy: bounded duty-cycle actuation (issue 31).
+        schedule = find_heating_output(temp_price_df, house, 'optimal')
+        interval_seconds = pd.to_timedelta(house.freq).total_seconds()
+        plan = plan_from_schedule(schedule, interval_seconds=interval_seconds)
         # Check if the device was discovered successfully
         if dev is None:
             raise ValueError("Device could not be discovered. Please check the DEVICEIP, email, and password.")
-        # Check user input and turn the switch on or off accordingly
-        print(user_input)
-        if user_input:
-            await dev.turn_on()
-            print("Device turned on.")
-        else:
-            await dev.turn_off()
-            print("Device turned off.")
-       # else:
-        #    print("Invalid input. Please enter 0 or 1.")
+        # Independent max-on safety net (issue 31).
+        watchdog = MaxOnWatchdog(dev)
+        watchdog.start()
+        try:
+            if plan.total_on_seconds > 0:
+                watchdog.notify_on()
+            await execute_plan(dev, plan, clock)
+        finally:
+            watchdog.notify_off()
+            await watchdog.stop()
 
         # Update the device state after action
         await dev.update()

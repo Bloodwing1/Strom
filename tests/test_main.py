@@ -1,68 +1,66 @@
-# test_smart_plug_controller.py
-import pytest
-import asyncio
+"""Deterministic controller tests for the duty-cycle actuation path.
+
+The optimizer and the smart plug are faked; no network, config files, or
+wall clock are involved.
+"""
+
+from __future__ import annotations
+
 from unittest.mock import patch
-import pandas as pd
 
-# Import your main module (assuming it's named smart_plug_controller.py)
+import pytest
+
 from strom.cli import main
-from strom.cli import setup_env_config
 
-# Create your mock device for testing
-class MockSmartPlug:
-    def __init__(self):
-        self.is_on = None
-        
-    async def update(self):
-        return True
-        
-    async def turn_on(self):
-        self.is_on = True
-        return True
-        
-    async def turn_off(self):
-        self.is_on = False
-        return True
-        
-    async def async_close(self):
-        return True
-
-# Test that heating turns on when needed
-@pytest.mark.asyncio
+from .conftest import FakePlug, ManualClock, make_schedule
 
 
+@pytest.fixture
+def house():
+    from strom.optimization_utils import House
+
+    return House()
 
 
-async def test_heating_on():
+async def _run_main(plug, schedule, house, clock):
+    with patch("kasa.Discover.discover_single", return_value=plug), \
+         patch("strom.cli.find_heating_output", return_value=schedule), \
+         patch("strom.cli.get_temp_price_df", return_value=None):
+        await main("email", "password", "1.2.3.4", house, clock=clock)
 
-    email, password, device_ip, house = setup_env_config()
-    # Create a mock device
-    mock_device = MockSmartPlug()
-    
-    # Create mock heating result (ON)
-    mock_result = pd.DataFrame({'HeaterOutput': [1]})
-    
-    with patch('kasa.Discover.discover_single', return_value=mock_device), \
-         patch('strom.cli.find_heating_output', return_value=mock_result):
-        
-        await main(email, password, device_ip, house)
-        print("Device state after main:", mock_device.is_on)
-        assert mock_device.is_on == True
 
-# Test that heating turns off when not needed
-@pytest.mark.asyncio
-async def test_heating_off():
+async def test_heater_schedule_switches_device_on(house, plug, clock):
+    schedule = make_schedule([1.0, 0.0])
+    await _run_main(plug, schedule, house, clock)
+    assert plug.calls[0] == "turn_on"
+    assert plug.is_on is True
+    # Connection is closed on the happy path.
+    assert "async_close" in plug.calls
 
-    email, password, device_ip, house = setup_env_config()
-    # Create a mock device
-    mock_device = MockSmartPlug()
-    
-    # Create mock heating result (OFF)
-    mock_result = pd.DataFrame({'HeaterOutput': [0]})
 
-    
-    with patch('kasa.Discover.discover_single', return_value=mock_device), \
-         patch('strom.cli.find_heating_output', return_value=mock_result):
-        
-        await main(email, password, device_ip, house)
-        assert mock_device.is_on == False
+async def test_zero_schedule_switches_device_off(house, plug, clock):
+    schedule = make_schedule([0.0, 0.0])
+    await _run_main(plug, schedule, house, clock)
+    assert "turn_off" in plug.calls
+    assert plug.is_on is False
+
+
+async def test_fractional_schedule_runs_duty_cycle(house, plug, clock):
+    schedule = make_schedule([0.5])
+    await _run_main(plug, schedule, house, clock)
+    assert plug.calls[:2] == ["turn_on", "turn_off"]
+    # One control interval of 1h at 50% duty: on 1800s, off 1800s.
+    assert clock.sleeps == [1800.0, 1800.0]
+
+
+async def test_failed_schedule_never_touches_plug(house, plug, clock):
+    import numpy as np
+
+    schedule = make_schedule([np.nan])
+    with patch("kasa.Discover.discover_single", return_value=plug), \
+         patch("strom.cli.find_heating_output", return_value=schedule), \
+         patch("strom.cli.get_temp_price_df", return_value=None):
+        await main("email", "password", "1.2.3.4", house, clock=clock)
+    # NaN must be rejected before any plug command.
+    assert "turn_on" not in plug.calls
+    assert "turn_off" not in plug.calls
