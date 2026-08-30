@@ -178,13 +178,7 @@ def plan_from_schedule(
         raise InvalidScheduleError(
             "Heater output is NaN (solver failure?); refusing to actuate."
         )
-    try:
-        output = float(raw)
-    except (TypeError, ValueError) as exc:
-        raise InvalidScheduleError(
-            f"Heater output {raw!r} is not a number; refusing to actuate."
-        ) from exc
-    return resolve_actuation(output, interval_seconds, min_pulse_seconds)
+    return resolve_actuation(float(raw), interval_seconds, min_pulse_seconds)
 
 
 async def execute_plan(

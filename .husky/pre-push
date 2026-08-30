@@ -1,2 +1,4 @@
+#!/usr/bin/env sh
+
 # Full deterministic gate before sharing work: lint, typing, unit tests.
 mise run check

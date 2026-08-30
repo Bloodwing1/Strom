@@ -27,7 +27,6 @@ import pandas as pd
 from .control import (
     MAX_ON_SECONDS_DEFAULT,
     Clock,
-    MaxOnWatchdog,
     SystemClock,
     execute_plan,
     plan_from_schedule,
@@ -155,7 +154,9 @@ async def run_control_cycle(
         )
 
 
-def _make_watchdog(deps: ControllerDeps, dev) -> MaxOnWatchdog:
+def _make_watchdog(deps: ControllerDeps, dev):
+    from .control import MaxOnWatchdog
+
     return MaxOnWatchdog(dev, max_on_seconds=deps.max_on_seconds,
                          clock=deps.clock)
 

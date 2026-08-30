@@ -1,2 +1,4 @@
+#!/usr/bin/env sh
+
 # Lint the exact code that is about to be committed.
 mise exec -- .venv/bin/flake8 strom tests

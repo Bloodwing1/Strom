@@ -32,7 +32,7 @@ jobs:
         env:
           WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
           PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
-        run: pytest -m integration
+        run: pytest -m integration --timeout=300
 
   mutation:
     name: Mutation testing (safety-critical modules)

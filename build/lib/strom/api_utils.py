@@ -91,6 +91,18 @@ def _retry_loop(
             sleep(backoff_seconds * (2 ** attempt))
 
 
+def find_root_dir(target_folder: str = "Strom") -> str:
+    current_dir = os.getcwd()
+    parent_dir = current_dir
+
+    while parent_dir == current_dir or current_dir != '/':
+        if target_folder in os.listdir(current_dir):
+            return os.path.abspath(os.path.join(current_dir, target_folder))
+        current_dir = os.path.dirname(current_dir)
+
+    raise FileNotFoundError(f"'{target_folder}' folder not found in directory tree")
+
+
 def find_config_file(name: str) -> Path:
     """Locate a file in the Strom config directory without side effects.
 
