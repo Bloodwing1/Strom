@@ -10,7 +10,8 @@ Strom is a free, open-source script that brings smart heating to your home. It u
 
 ## Requirements
 
-Requires **Python 3.12.8**
+Requires **Python 3.12.8**. With [mise](https://mise.jdx.dev/) the correct
+Python (and Node for the git hooks) is provisioned automatically.
 
 ## Installation
 
@@ -28,19 +29,26 @@ Requires **Python 3.12.8**
     source venv/bin/activate  # On Windows use `venv\Scripts\activate`
     ```
 
-3. Install the required packages:
+3. Install the package (all runtime dependencies included):
 
     ```sh
-    pip install -r requirements.txt
+    pip install .
     ```
 
-4. Create a _config_ folder in the root project directory. This folder is your personal api keys will be saved
-5. Place your electricity price and weather API keys in a "price_api_key.txt" "weather_api_Key.txt" file that you create in the _config_ folder.
+    For development (tests, lint, type-check):
+
+    ```sh
+    pip install -e ".[dev]"
+    ```
+
+4. Create a _config_ folder in the root project directory. This folder is where your personal api keys will be saved
+5. Place your electricity price and weather API keys in a "price_api_key.txt" "weather_api_key.txt" file that you create in the _config_ folder.
 6. Place your tapo account credentials in a "tapologin.env" file in the _config_ folder. The content of this .env file should look like this:
 
     ```env
     EMAIL=myemail@hotmail.com
     PASSWORD=myPassword12
+    DEVICEIP=192.168.1.42
     ```
 
 6. You can optionally add your custom house heating parameters to a "house_config.json" file in the _config_ folder.
@@ -62,20 +70,37 @@ Requires **Python 3.12.8**
 }
 ```
 
- Otherwise the main script will generate and empty json file that will fill the house with the default values we used.
-
+ If the file is missing, the documented default parameters above are used.
+ If the file is malformed or contains unknown keys, Strom fails fast with an
+ actionable error instead of guessing.
 
 ## Usage
 
 [Technical documentation](https://janbalanya.com/strom-docs/)
 
-To run the main script manually:
+The single supported entry point is the `strom` CLI (also available as
+`python -m strom`):
 
 ```sh
-python main.py  # python3 main.py for Mac users
+strom --config-dir ./config --horizon-hours 24 --log-level INFO
 ```
 
-Alternatively create [a cron job](https://www.freecodecamp.org/news/cron-jobs-in-linux/) or similar, that activates the main script hourly.
+`python main.py` remains as a backwards-compatible shim that runs the same
+code path.
+
+The control policy executes a bounded duty cycle: the optimizer's fractional
+output for each interval is translated into an exact ON/OFF schedule for the
+smart plug, and an independent watchdog forces the plug off if it ever stays
+on too long.
+
+## Development
+
+- `mise run check` — lint, type-check and deterministic tests (what CI blocks on)
+- `mise run test-integration` — live provider canaries (needs API keys)
+- `mise run mutation` — mutation testing of the safety-critical modules
+
+Git hooks (via [husky](https://typicode.github.io/husky/)) run the linter on
+commit and the full check on push; enable them with `mise run hooks`.
 
 ## Future Considerations
 

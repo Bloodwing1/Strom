@@ -11,12 +11,7 @@ import pandas as pd
 import pytest
 import requests
 
-from strom.api_utils import (
-    BACKOFF_SECONDS,
-    MAX_ATTEMPTS,
-    get_weather_data,
-    get_price_series,
-)
+from strom.api_utils import get_price_series, get_weather_data
 from strom.errors import PriceProviderError, WeatherProviderError
 
 
@@ -116,6 +111,7 @@ class TestWeatherContract:
             get_weather_data("X", http_get=http, sleep=lambda s: None)
         assert len(http.calls) == 1
         assert "secret-key" not in str(info.value)
+
     def test_rate_limit_is_retried_then_typed_error(self):
         http = FakeHttp([FakeResponse(status=429)])
         sleeps = []

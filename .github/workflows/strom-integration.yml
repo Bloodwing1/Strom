@@ -1,0 +1,58 @@
+# Non-blocking by schedule: live provider canaries and mutation testing.
+# These need real credentials or long runtimes and therefore never gate PRs.
+name: Integration
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # daily, after the ENTSO-E day-ahead publication window
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: Live provider canaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.8"
+          cache: pip
+
+      - name: Install package with dev tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run live provider tests
+        env:
+          WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
+          PRICE_API_KEY: ${{ secrets.PRICE_API_KEY }}
+        run: pytest -m integration
+
+  mutation:
+    name: Mutation testing (safety-critical modules)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.8"
+          cache: pip
+
+      - name: Install package with dev tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run mutmut on strom/control.py and strom/optimization_utils.py
+        run: |
+          mutmut run
+          mutmut results

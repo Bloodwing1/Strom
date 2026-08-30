@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from strom.optimization_utils import House, find_heating_output
 
@@ -83,7 +82,6 @@ class TestEconomicRelationships:
         h = house(T_interior_init=18.0, T_min=18.0)
         result = find_heating_output(df, h, "optimal")
         cheap_energy = result["HeaterOutput"].iloc[:2].sum()
-        expensive_energy = result["HeaterOutput"].iloc[2:].sum()
         # Freezing exterior: comfort must be maintained in expensive hours
         # too, so the optimizer pre-heats while energy is cheap.
         assert cheap_energy > 0

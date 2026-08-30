@@ -19,7 +19,7 @@ from strom.errors import (
     SolverError,
 )
 
-from .conftest import FakePlug, ManualClock, make_schedule
+from .conftest import make_schedule
 
 
 def make_deps(plug, clock, *, discover=None, fetch=None, optimize=None,

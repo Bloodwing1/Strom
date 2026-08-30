@@ -10,18 +10,18 @@ import matplotlib
 
 matplotlib.use("Agg")  # must run before pyplot is imported anywhere
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import pytest
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
 
-from strom.plot_utils import (
+from strom.plot_utils import (  # noqa: E402
     plot_combined_cases,
     plot_combined_cases_years,
     plot_factor_analysis,
 )
 
-from .conftest import make_schedule
+from .conftest import make_schedule  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

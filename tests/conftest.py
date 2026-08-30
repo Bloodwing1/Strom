@@ -14,8 +14,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from strom.control import Clock
-
 
 def make_config_dir(root: Path) -> Path:
     """Create a valid config directory for tests (credentials + API keys)."""

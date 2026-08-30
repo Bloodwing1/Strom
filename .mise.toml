@@ -1,3 +1,35 @@
 [tools]
 python = "3.12.8"
 node = "22"
+
+[tasks.install]
+description = "Create the venv and install Strom with dev tooling"
+run = "python -m venv .venv && .venv/bin/pip install -e '.[dev]' && mise run hooks"
+
+[tasks.test]
+description = "Deterministic unit tests (no network, no secrets)"
+run = ".venv/bin/pytest"
+
+[tasks.test-integration]
+description = "Live provider canaries (requires API keys)"
+run = ".venv/bin/pytest -m integration"
+
+[tasks.lint]
+description = "flake8 (blocking)"
+run = ".venv/bin/flake8 strom tests"
+
+[tasks.typecheck]
+description = "mypy (blocking)"
+run = ".venv/bin/mypy"
+
+[tasks.check]
+description = "Everything CI runs on every push"
+depends = ["lint", "typecheck", "test"]
+
+[tasks.mutation]
+description = "Mutation testing of the safety-critical modules (slow)"
+run = ".venv/bin/mutmut run"
+
+[tasks.hooks]
+description = "Activate git hooks (husky)"
+run = "npx husky"
