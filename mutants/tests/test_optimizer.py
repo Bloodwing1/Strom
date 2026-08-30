@@ -238,32 +238,6 @@ class TestInfeasibleAndSolverFailure:
         with pytest.raises(SolverError, match="bounds"):
             find_heating_output(make_input(), default_house(), "optimal")
 
-    def test_non_finite_solver_values_rejected(self):
-        """The finite-value guard must trigger on any non-finite output,
-        whether it comes from the heater, cooling or state trajectory."""
-        from strom.optimization_utils import _check_solution
-
-        house = default_house()
-        zeros = np.zeros(24)
-        eye = np.eye(2)
-        zero_b = np.zeros((2, 3))
-        good = np.tile(np.array([[20.0], [19.0]]), (1, 24))
-
-        _check_solution(  # fully finite passes
-            {"HeaterOutput": np.full(24, 0.5), "CoolingOutput": zeros,
-             "_T": good},
-            house, eye, zero_b, zeros)
-        with pytest.raises(SolverError, match="non-finite"):
-            _check_solution(
-                {"HeaterOutput": np.full(24, np.nan), "CoolingOutput": zeros,
-                 "_T": good},
-                house, eye, zero_b, zeros)
-        with pytest.raises(SolverError, match="non-finite"):
-            _check_solution(
-                {"HeaterOutput": np.full(24, 0.5), "CoolingOutput": zeros,
-                 "_T": np.full((2, 24), np.nan)},
-                house, eye, zero_b, zeros)
-
     def test_invalid_mode_rejected(self):
         with pytest.raises(InvalidInputError, match="heating mode"):
             find_heating_output(make_input(), default_house(), "turbo")

@@ -108,7 +108,7 @@ def resolve_actuation(
             or if the interval is not positive.
     """
     interval_seconds = float(interval_seconds)
-    if not interval_seconds > 0.0 or not pd.api.types.is_scalar(interval_seconds):
+    if not interval_seconds > 0.0:
         raise InvalidScheduleError(
             f"Control interval must be positive, got {interval_seconds!r}."
         )

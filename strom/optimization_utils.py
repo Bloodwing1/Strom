@@ -388,9 +388,9 @@ def find_heating_output(temp_price_df: pd.DataFrame,
                                          house.T_min, house.T_max, dt)
     T_differential = 0.2
 
-    heater_output = cp.Variable(time_steps)
-    cooling_output = cp.Variable(time_steps)
-    T = cp.Variable((2, time_steps))
+    heater_output = cp.Variable(time_steps, name="HeaterOutput")
+    cooling_output = cp.Variable(time_steps, name="CoolingOutput")
+    T = cp.Variable((2, time_steps), name="T")
 
     constraints = [
         heater_output >= 0.0, heater_output <= 1.0,

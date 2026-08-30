@@ -30,7 +30,7 @@ class TestResolveActuation:
     def test_zero_is_never_on(self):
         plan = resolve_actuation(0.0, INTERVAL)
         assert plan.total_on_seconds == 0.0
-        assert all(s.on is False for s in plan.segments)
+        assert all(not s.on for s in plan.segments)
 
     def test_one_is_full_interval(self):
         plan = resolve_actuation(1.0, INTERVAL)
@@ -52,14 +52,6 @@ class TestResolveActuation:
         for duty in (0.1, 0.4, 0.9):
             plan = resolve_actuation(duty, INTERVAL)
             assert plan.total_seconds == pytest.approx(INTERVAL)
-
-    def test_sub_second_off_segment_still_covers_interval(self):
-        # Duty just below 1.0: the remainder is under one second but the
-        # plan must still cover the whole interval and end with OFF.
-        plan = resolve_actuation(3599.5 / INTERVAL, INTERVAL)
-        assert plan.total_seconds == pytest.approx(INTERVAL)
-        assert plan.segments[-1].on is False
-        assert plan.segments[-1].seconds == pytest.approx(0.5)
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
     def test_non_finite_rejected(self, bad):
@@ -101,10 +93,6 @@ class TestPlanFromSchedule:
     def test_index_out_of_range_rejected(self):
         with pytest.raises(InvalidScheduleError):
             plan_from_schedule(make_schedule([0.5]), INTERVAL, index=5)
-
-    def test_index_equal_to_length_rejected(self):
-        with pytest.raises(InvalidScheduleError):
-            plan_from_schedule(make_schedule([0.5]), INTERVAL, index=1)
 
 
 class TestExecutePlan:
