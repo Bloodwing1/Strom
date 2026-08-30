@@ -152,34 +152,29 @@ class TestFailureInjection:
 
 
 class TestExitCodes:
-    @staticmethod
-    def _patch_cli(monkeypatch, cycle):
+    def test_strom_error_maps_to_exit_one(self, tmp_path, monkeypatch, caplog):
         from strom import cli
+        from .conftest import make_config_dir
 
-        monkeypatch.setattr(
-            cli, "setup_env_config", lambda: ("e", "p", "1.2.3.4", None)
-        )
-        monkeypatch.setattr(cli, "main", cycle)
+        config = make_config_dir(tmp_path)
 
-    def test_strom_error_maps_to_exit_one(self, monkeypatch, caplog):
-        from strom import cli
-
-        def failing_cycle(email, password, device_ip, house,
-                          deps=None, clock=None):
+        async def failing_cycle(cfg, deps):
             raise ProviderError("rate limited")
 
-        self._patch_cli(monkeypatch, failing_cycle)
+        monkeypatch.setattr(cli, "run_cycle", failing_cycle)
         with caplog.at_level("ERROR"):
-            assert cli.run() == 1
+            assert cli.run(["--config-dir", str(config)]) == 1
         assert "rate limited" in caplog.text
 
-    def test_unexpected_error_propagates(self, monkeypatch):
+    def test_unexpected_error_propagates(self, tmp_path, monkeypatch):
         from strom import cli
+        from .conftest import make_config_dir
 
-        def failing_cycle(email, password, device_ip, house,
-                          deps=None, clock=None):
+        config = make_config_dir(tmp_path)
+
+        async def failing_cycle(cfg, deps):
             raise ZeroDivisionError("bug")
 
-        self._patch_cli(monkeypatch, failing_cycle)
+        monkeypatch.setattr(cli, "run_cycle", failing_cycle)
         with pytest.raises(ZeroDivisionError):
-            cli.run()
+            cli.run(["--config-dir", str(config)])

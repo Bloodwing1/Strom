@@ -23,7 +23,12 @@ import requests
 from bs4 import XMLParsedAsHTMLWarning
 from entsoe import EntsoePandasClient
 
-from .errors import PriceProviderError, WeatherProviderError, StromError
+from .errors import (
+    ConfigurationError,
+    PriceProviderError,
+    StromError,
+    WeatherProviderError,
+)
 from entsoe.exceptions import NoMatchingDataError
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
@@ -127,12 +132,38 @@ def get_api_key(key_path: str) -> str:
     return read_api_key(key_path)
 
 
-def get_weather_api_key() -> str:
+def get_weather_api_key(config_dir: Path | None = None) -> str:
     api_key = os.getenv('WEATHER_API_KEY')
-    if api_key:
-        return api_key
+    if api_key and api_key.strip():
+        return api_key.strip()
 
-    return read_api_key(find_config_file('weather_api_key.txt'))
+    path = (config_dir / 'weather_api_key.txt') if config_dir \
+        else find_config_file('weather_api_key.txt')
+    if path.is_file():
+        key = path.read_text().strip()
+        if key:
+            return key
+    raise ConfigurationError(
+        f"No weather API key found; set WEATHER_API_KEY or create "
+        f"{path} with the key."
+    )
+
+
+def get_price_api_key(config_dir: Path | None = None) -> str:
+    api_key = os.getenv('PRICE_API_KEY')
+    if api_key and api_key.strip():
+        return api_key.strip()
+
+    path = (config_dir / 'price_api_key.txt') if config_dir \
+        else find_config_file('price_api_key.txt')
+    if path.is_file():
+        key = path.read_text().strip()
+        if key:
+            return key
+    raise ConfigurationError(
+        f"No electricity price API key found; set PRICE_API_KEY or create "
+        f"{path} with the key."
+    )
 
 
 def _validate_weather_payload(payload, city: str) -> list[dict]:
@@ -165,6 +196,7 @@ def _validate_weather_payload(payload, city: str) -> list[dict]:
 
 def get_weather_data(city: str = "Barcelona, ES",
                      *,
+                     api_key: str | None = None,
                      http_get: Callable = requests.get,
                      sleep: Callable[[float], None] = time.sleep,
                      max_attempts: int = MAX_ATTEMPTS,
@@ -176,7 +208,7 @@ def get_weather_data(city: str = "Barcelona, ES",
             bounded retries, authentication problems, and malformed or empty
             responses. Messages never contain the API key.
     """
-    api_key = get_weather_api_key()
+    api_key = api_key or get_weather_api_key()
     params = {"q": city, "appid": api_key}
 
     def on_error(exc: Exception, transient: bool) -> Exception:
@@ -230,6 +262,7 @@ def get_spain_electricity_prices(
     start: pd.Timestamp | None = None,
     end: pd.Timestamp | None = None,
     *,
+    api_key: str | None = None,
     client=None,
     sleep: Callable[[float], None] = time.sleep,
     max_attempts: int = MAX_ATTEMPTS,
@@ -248,9 +281,9 @@ def get_spain_electricity_prices(
     if end is None:
         end = start + pd.Timedelta(hours=26)
 
-    api_key = os.getenv('PRICE_API_KEY')
+    api_key = api_key or os.getenv('PRICE_API_KEY')
     if client is None:
-        api_key = api_key or read_api_key(find_config_file('price_api_key.txt'))
+        api_key = api_key or get_price_api_key()
         client = EntsoePandasClient(api_key=api_key,
                                     timeout=PRICE_TIMEOUT_SECONDS,
                                     retry_count=1)

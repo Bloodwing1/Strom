@@ -67,6 +67,7 @@ class ControllerDeps:
     clock: Clock = field(default_factory=SystemClock)
     max_on_seconds: float = MAX_ON_SECONDS_DEFAULT
     interval_seconds: float = 3600.0
+    horizon_hours: int = 24
 
 
 @asynccontextmanager

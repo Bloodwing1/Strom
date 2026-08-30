@@ -7,6 +7,7 @@ secrets, or the wall clock.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -14,6 +15,18 @@ import pandas as pd
 import pytest
 
 from strom.control import Clock
+
+
+def make_config_dir(root: Path) -> Path:
+    """Create a valid config directory for tests (credentials + API keys)."""
+    config = root / "config"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "tapologin.env").write_text(
+        "EMAIL=user@example.com\nPASSWORD=secret-pass\nDEVICEIP=192.168.1.42\n"
+    )
+    (config / "weather_api_key.txt").write_text("weather-key\n")
+    (config / "price_api_key.txt").write_text("price-key\n")
+    return config
 
 
 class ManualClock:
