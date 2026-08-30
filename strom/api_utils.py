@@ -42,7 +42,7 @@ WEATHER_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
 #: (connect, read) timeouts in seconds for every HTTP request.
 WEATHER_TIMEOUT: tuple[float, float] = (5.0, 15.0)
-PRICE_TIMEOUT_SECONDS = 30.0
+PRICE_TIMEOUT_SECONDS = 30  # entsoe-py declares timeout as Optional[int]
 
 #: Bounded retry policy for transient failures.
 MAX_ATTEMPTS = 3

@@ -137,42 +137,45 @@ class TestInputValidation:
         assert (prices == 0.10).all()
 
 
-class TestSuccessfulSolve:
-    @pytest.fixture(scope="class")
-    def result(self):
-        df = make_input(exterior=10.0)
-        house = default_house()
-        return find_heating_output(df, house, "optimal"), house
+@pytest.fixture(scope="module")
+def solved_result():
+    """One shared optimal solve for all invariant checks (pytest 9 no longer
+    allows class-scoped fixtures as class members)."""
+    df = make_input(exterior=10.0)
+    house = default_house()
+    return find_heating_output(df, house, "optimal"), house
 
-    def test_outputs_are_finite(self, result):
-        state, _ = result
+
+class TestSuccessfulSolve:
+    def test_outputs_are_finite(self, solved_result):
+        state, _ = solved_result
         assert np.isfinite(state["HeaterOutput"]).all()
         assert np.isfinite(state["CoolingOutput"]).all()
         assert np.isfinite(state["InteriorTemperature"]).all()
         assert np.isfinite(state["Cost"]).all()
 
-    def test_control_bounds_respected(self, result):
-        state, _ = result
+    def test_control_bounds_respected(self, solved_result):
+        state, _ = solved_result
         assert ((state["HeaterOutput"] >= 0) &
                 (state["HeaterOutput"] <= 1)).all()
         assert ((state["CoolingOutput"] >= 0) &
                 (state["CoolingOutput"] <= 1)).all()
 
-    def test_comfort_bounds_respected(self, result):
-        state, house = result
+    def test_comfort_bounds_respected(self, solved_result):
+        state, house = solved_result
         assert (state["InteriorTemperature"] >= house.T_min - 1e-3).all()
         assert (state["InteriorTemperature"] <= house.T_max + 1e-3).all()
 
-    def test_cost_is_independently_recomputable(self, result):
-        state, house = result
+    def test_cost_is_independently_recomputable(self, solved_result):
+        state, house = solved_result
         dt = house.dt_hours
         recomputed = (state["Price"] * dt
                       * (house.Q_heater * state["HeaterOutput"]
                          + house.Q_cooling * state["CoolingOutput"]))
         assert np.allclose(state["Cost"], recomputed)
 
-    def test_dynamics_residual_within_tolerance(self, result):
-        state, house = result
+    def test_dynamics_residual_within_tolerance(self, solved_result):
+        state, house = solved_result
         A = np.array([
             [-1.0 / (house.R_interior * house.C_air),
              1.0 / (house.R_interior * house.C_air)],
