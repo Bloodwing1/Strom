@@ -34,13 +34,32 @@ def get_api_key(key_path: str) -> str:
     """Alias for read_api_key for backward compatibility"""
     return read_api_key(key_path)
 
+def find_config_file(name: str) -> Path:
+    """Locate a file in the Strom config directory without side effects.
+
+    Looks in ``$STROM_CONFIG_DIR`` first, then in a ``config/`` folder next
+    to any parent of the current working directory. Never calls ``os.chdir``.
+    """
+    env_dir = os.getenv("STROM_CONFIG_DIR")
+    if env_dir:
+        candidate = Path(env_dir) / name
+        if candidate.exists():
+            return candidate
+        return candidate
+    current = Path.cwd()
+    for directory in (current, *current.parents):
+        candidate = directory / "config" / name
+        if candidate.exists():
+            return candidate
+    return current / "config" / name
+
+
 def get_weather_api_key() -> str:
     api_key = os.getenv('WEATHER_API_KEY')
     if api_key:
         return api_key
-        
-    os.chdir(find_root_dir())
-    return read_api_key('./config/weather_api_key.txt')
+
+    return read_api_key(find_config_file('weather_api_key.txt'))
 
 def get_weather_data(city: str = "Barcelona, ES") -> pd.Series:
     """Get weather for specified city. Examples: Barcelona, ES | Madrid, ES | Berlin, DE"""
@@ -59,14 +78,17 @@ def get_weather_data(city: str = "Barcelona, ES") -> pd.Series:
         ) from e
     
     data = response.json()
-    weather_data = [(pd.Timestamp(entry['dt'], unit='s', tz='UTC').tz_convert('Europe/Madrid'),
-                    entry['main']['temp'] - 273.15) for entry in data['list']]
+    # Unix epochs are UTC by definition; UTC is the canonical internal
+    # timezone (audit issue 34). Downstream code converts if needed.
+    weather_data = [(pd.Timestamp(entry['dt'], unit='s', tz='UTC'),
+                     entry['main']['temp'] - 273.15) for entry in data['list']]
 
     # Create a Series where the Timestamp is the index
     temperature_series = pd.Series(
         dict(weather_data),  # Convert the list of tuples to a dictionary
         name='ExteriorTemperature'  # Set the name of the series
     )
+    temperature_series.index.name = 'Timestamp'
 
     return temperature_series
 
@@ -81,19 +103,35 @@ def interpolate_hourly_data(df: pd.DataFrame, hours: int) -> pd.DataFrame:
     df = df.reindex(time_range).interpolate()
     return df.bfill() if df.isnull().values.any() else df
 
-def get_spain_electricity_prices() -> pd.Series:
-    price_api_key = os.getenv('PRICE_API_KEY') or read_api_key('./config/price_api_key.txt')
-    client = EntsoePandasClient(api_key=price_api_key)
-    
-    start = pd.Timestamp.now(tz='Europe/Madrid')
-    end = start + pd.Timedelta(hours=24)
-    time_range = pd.date_range(start=start, end=end, freq='h', tz='Europe/Madrid')
-    
-    price_series = client.query_day_ahead_prices('ES', start=start, end=end)
-    price_series.name = 'Price'
-    price_series = price_series.reindex(time_range, method='nearest')
-    price_series = price_series/1000.0  # convert price from EUR/MWh to EUR/kWh
-    return price_series
+def get_spain_electricity_prices(zone: str = 'ES',
+                                  start: pd.Timestamp | None = None,
+                                  end: pd.Timestamp | None = None) -> pd.Series:
+    """Query day-ahead prices for ``zone`` and return them on a UTC index.
 
-def get_price_series() -> pd.Series: #TODO: expand to other countries
-    return get_spain_electricity_prices()
+    ENTSO-E market time (CET/CEST) is converted to UTC, the canonical
+    internal timezone, so intervals stay unique and monotonic across DST
+    transitions.
+    """
+    price_api_key = os.getenv('PRICE_API_KEY') or read_api_key(
+        find_config_file('price_api_key.txt'))
+    client = EntsoePandasClient(api_key=price_api_key)
+
+    if start is None:
+        start = pd.Timestamp.now(tz='UTC').floor('h') - pd.Timedelta(hours=1)
+    if end is None:
+        end = start + pd.Timedelta(hours=26)
+
+    price_series = client.query_day_ahead_prices(zone, start=start, end=end)
+    if not isinstance(price_series.index, pd.DatetimeIndex) \
+            or price_series.index.tz is None:
+        raise ValueError("ENTSO-E returned prices without timezone information.")
+    price_series.index = price_series.index.tz_convert('UTC')
+    price_series.name = 'Price'
+    price_series = price_series[~price_series.index.duplicated(keep='last')]
+    price_series = price_series/1000.0  # convert price from EUR/MWh to EUR/kWh
+    return price_series.sort_index()
+
+def get_price_series(zone: str = 'ES',
+                     start: pd.Timestamp | None = None,
+                     end: pd.Timestamp | None = None) -> pd.Series: #TODO: expand to other countries
+    return get_spain_electricity_prices(zone=zone, start=start, end=end)

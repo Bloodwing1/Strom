@@ -64,3 +64,11 @@ class InvalidScheduleError(ActuationError):
 
 class DeviceError(StromError):
     """The smart plug could not be discovered, commanded or verified."""
+
+
+class CoverageError(StromError):
+    """A required data horizon is not covered by real observations.
+
+    Raised instead of silently filling gaps from distant observations
+    (audit issue 34).
+    """
