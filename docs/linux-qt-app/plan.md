@@ -41,25 +41,25 @@ The horizon is the optimization look-ahead, **not the runtime or number of cycle
 Create these files:
 
 ```text
-strom/gui/__init__.py       # Empty; no startup side effects.
-strom/gui/__main__.py       # Thin module launcher.
-strom/gui/app.py            # Entry point and QApplication setup.
-strom/gui/window.py         # Widgets, form validation, settings, close behavior.
-strom/gui/runner.py         # QObject wrapping one QProcess and lifecycle signals.
-tests/gui/conftest.py       # GUI fixtures; isolate settings and environments.
-tests/gui/test_runner.py    # Process lifecycle and output tests.
-tests/gui/test_window.py    # Interaction and state tests.
+strom/linux_gui/__init__.py       # Empty; no startup side effects.
+strom/linux_gui/__main__.py       # Thin module launcher.
+strom/linux_gui/app.py            # Entry point and QApplication setup.
+strom/linux_gui/window.py         # Widgets, form validation, settings, close behavior.
+strom/linux_gui/runner.py         # QObject wrapping one QProcess and lifecycle signals.
+tests/linux_gui/conftest.py       # GUI fixtures; isolate settings and environments.
+tests/linux_gui/test_runner.py    # Process lifecycle and output tests.
+tests/linux_gui/test_window.py    # Interaction and state tests.
 ```
 
 In `pyproject.toml`:
 
 1. Add a `gui` extra with `PySide6>=6.8,<7`. Verify resolution on the actual Linux target with Python 3.12; record the tested PySide6 version in the README rather than claiming every Qt 6 build works.
 2. Add a `gui-dev` extra with `pytest-qt>=4.4,<5`.
-3. Add `strom-gui = "strom.gui.app:run"` under `[project.gui-scripts]`.
+3. Add `strom-gui = "strom.linux_gui.app:run"` under `[project.gui-scripts]`.
 4. Replace the explicit `packages = ["strom"]` declaration with setuptools package discovery restricted to `strom` and `strom.*`. Do not package `tests` or `build`.
 5. Keep Qt optional: importing `strom` and running `strom --help` must work without PySide6 installed. Import PySide6 inside the GUI entry point or GUI-only modules. The entry point should give a short installation hint if PySide6 itself is missing; do not disguise unrelated import errors as a missing dependency.
 
-`python -m strom.gui` and `strom-gui` must call the same `run() -> int`. Create exactly one `QApplication`, set stable organization/application names before constructing `QSettings`, build/show the window, and return `app.exec()`. Do not create a QApplication at import time.
+`python -m strom.linux_gui` and `strom-gui` must call the same `run() -> int`. Create exactly one `QApplication`, set stable organization/application names before constructing `QSettings`, build/show the window, and return `app.exec()`. Do not create a QApplication at import time.
 
 ## 2. Build a single simple window
 
@@ -159,14 +159,14 @@ Required automated cases:
 - Window remains responsive while a fake child is running; closing during Starting/Running is ignored without terminating the child; closing after completion succeeds.
 - Confirmation cancellation starts nothing. Invalid directory starts nothing. Cancelling Browse preserves the path.
 - Restored invalid settings do not crash; log clearing does not affect the child; log memory remains bounded.
-- A wheel installed in a fresh environment includes `strom.gui` and both launchers work from outside the checkout. Without GUI extras, `strom --help` still works and the GUI launcher gives the install hint.
+- A wheel installed in a fresh environment includes `strom.linux_gui` and both launchers work from outside the checkout. Without GUI extras, `strom --help` still works and the GUI launcher gives the install hint.
 
 Run existing checks and the dedicated GUI suite after implementation:
 
 ```sh
 python -m pip install -e '.[dev,gui,gui-dev]'
 mise run check
-QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/gui
+QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/linux_gui
 ```
 
 Use the same environment for installation and checks; activate `.venv` first or invoke its Python explicitly. Add a Linux CI GUI job that installs these extras, sets `QT_QPA_PLATFORM=offscreen`, runs the GUI suite, and type-checks the added modules. Keep existing CLI-only smoke coverage and the coverage floor; do not lower gates to accommodate GUI code.
@@ -180,7 +180,7 @@ Manual acceptance on an actual Linux desktop (macOS results do not establish Lin
 
 ## 7. Documentation and completion criteria
 
-Update README with `pip install '.[gui]'`, `strom-gui`, `python -m strom.gui`, Python requirements, existing config-file setup, environment precedence, default location, one-cycle semantics, long-running behavior, no-stop limitation, and Linux troubleshooting. Update the current “single supported entry point” wording to explain that the GUI delegates to the unchanged CLI.
+Update README with `pip install '.[gui]'`, `strom-gui`, `python -m strom.linux_gui`, Python requirements, existing config-file setup, environment precedence, default location, one-cycle semantics, long-running behavior, no-stop limitation, and Linux troubleshooting. Update the current “single supported entry point” wording to explain that the GUI delegates to the unchanged CLI.
 
 Do not add AppImage/Flatpak/deb packaging or desktop integration in this first pass. Those require separate dependency, install-path, and runtime testing. A normal installed `strom-gui` command is the v1 deliverable.
 

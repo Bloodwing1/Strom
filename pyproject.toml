@@ -48,10 +48,10 @@ dev = [
 strom = "strom.cli:run"
 
 [project.gui-scripts]
-strom-gui = "strom.gui.app:run"
+strom-gui = "strom.linux_gui.app:run"
 
 [tool.setuptools.packages.find]
-# The GUI lives in the strom.gui subpackage; never package tests or build.
+# The GUI lives in the strom.linux_gui subpackage; never package tests or build.
 include = ["strom", "strom.*"]
 
 [tool.pytest.ini_options]

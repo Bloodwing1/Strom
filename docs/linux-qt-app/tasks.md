@@ -16,11 +16,11 @@ Do not start a task whose dependencies are not complete. If a plan requirement t
 
 ## Tasks
 
-1. **Packaging and entry points** (plan §1, items 1–5). Add the extras, the `strom-gui` script, and package discovery, and create the `strom/gui` package with a minimal `run() -> int` that builds one `QApplication` and an empty placeholder window.
-   Done when: an editable install with `[dev,gui,gui-dev]` succeeds on the working machine; both `python -m strom.gui` and `strom-gui` open that window; `strom --help` still works with PySide6 absent; flake8 and mypy pass on the new modules.
+1. **Packaging and entry points** (plan §1, items 1–5). Add the extras, the `strom-gui` script, and package discovery, and create the `strom/linux_gui` package with a minimal `run() -> int` that builds one `QApplication` and an empty placeholder window.
+   Done when: an editable install with `[dev,gui,gui-dev]` succeeds on the working machine; both `python -m strom.linux_gui` and `strom-gui` open that window; `strom --help` still works with PySide6 absent; flake8 and mypy pass on the new modules.
 
 2. **Runner process lifecycle** (plan §3, the launch and state-transition rules). Implement `runner.py` against an injectable launch specification, with no window code touching the process directly.
-   Done when: every state transition in the plan's table (§3) is exercised by `tests/gui/test_runner.py` using fake children — start, success, nonzero exit, failed-to-start, crash, and at least one overlapping error/finish — and terminal handling is idempotent under repeated Run.
+   Done when: every state transition in the plan's table (§3) is exercised by `tests/linux_gui/test_runner.py` using fake children — start, success, nonzero exit, failed-to-start, crash, and at least one overlapping error/finish — and terminal handling is idempotent under repeated Run.
 
 3. **Output handling** (plan §3, output rules). Add merged-channel streaming, incremental UTF-8 decoding, incomplete-line buffering, and the size bounds to the runner.
    Done when: tests cover a trailing line without newline, a multibyte character split across reads, and a large unterminated line capped with a truncation notice; the log widget receives plain text only.
@@ -38,7 +38,7 @@ Do not start a task whose dependencies are not complete. If a plan requirement t
    Done when: each bullet in the plan's required-cases list is either covered by an existing test or explicitly listed in this file as covered elsewhere; arguments with spaces and shell metacharacters are shown to reach the child verbatim; no test reads the developer's real `QSettings`.
 
 8. **Packaging verification** (plan §1 item 5 and §6 wheel bullet). Build a wheel, install it into a fresh environment without the repo on `sys.path`, and verify both launchers from outside the checkout.
-   Done when: the installed `strom-gui` and `python -m strom.gui` work from a foreign directory; `strom --help` works in an environment without GUI extras and the GUI launcher prints the install hint; the tested PySide6 version is recorded for the README task.
+   Done when: the installed `strom-gui` and `python -m strom.linux_gui` work from a foreign directory; `strom --help` works in an environment without GUI extras and the GUI launcher prints the install hint; the tested PySide6 version is recorded for the README task.
 
 9. **CI job** (plan §6, CI paragraph). Add the Linux GUI job to `.github/workflows/strom-tests.yml`.
    Done when: the new job installs the three extras, sets `QT_QPA_PLATFORM=offscreen`, runs the GUI suite, and type-checks the GUI modules; the existing CLI-only smoke job and coverage gate are unchanged and green.

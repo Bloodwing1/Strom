@@ -1,7 +1,7 @@
 """Entry point and QApplication setup for the Strom GUI.
 
 This module is the single entry point shared by the ``strom-gui`` script and
-``python -m strom.gui`` (see ``strom/gui/__main__.py``). It creates exactly one
+``python -m strom.linux_gui`` (see ``strom/linux_gui/__main__.py``). It creates exactly one
 ``QApplication`` and never touches Qt at import time, so importing ``strom``
 stays free of any Qt dependency.
 """
@@ -29,7 +29,7 @@ def run() -> int:
     app.setOrganizationName("Strom")
     app.setApplicationName("Strom")
 
-    from strom.gui.window import MainWindow
+    from strom.linux_gui.window import MainWindow
 
     window = MainWindow()
     window.show()
