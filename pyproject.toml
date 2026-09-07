@@ -24,6 +24,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Optional native desktop GUI (PySide6 / Qt 6 Widgets). See
+# docs/linux-qt-app/plan.md; the tested PySide6 version is recorded in the
+# README once verified on the Linux target.
+gui = [
+    "PySide6>=6.8,<7",
+]
+gui-dev = [
+    "pytest-qt>=4.4,<5",
+]
 dev = [
     "flake8>=7",
     "mypy>=1.14",
@@ -38,8 +47,12 @@ dev = [
 [project.scripts]
 strom = "strom.cli:run"
 
-[tool.setuptools]
-packages = ["strom"]
+[project.gui-scripts]
+strom-gui = "strom.gui.app:run"
+
+[tool.setuptools.packages.find]
+# The GUI lives in the strom.gui subpackage; never package tests or build.
+include = ["strom", "strom.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
