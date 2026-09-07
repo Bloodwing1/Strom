@@ -5,6 +5,7 @@ never import real device code. The launch specification is injectable, so the
 tests never run the real CLI.
 """
 
+import codecs
 import json
 import sys
 from pathlib import Path
@@ -231,3 +232,81 @@ def test_make_launch_spec_shape():
         "--log-level",
         "INFO",
     )
+
+
+# --- output handling (plan §3 output rules; task 3) ---
+
+
+def _fresh_runner_with_decoder():
+    """A runner with a decoder allocated, for direct chunk-feeding tests."""
+    from strom.linux_gui.runner import CycleRunner
+
+    runner = CycleRunner()
+    runner._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    runner._pending = ""
+    return runner
+
+
+def test_split_multibyte_character_decodes_across_chunks():
+    """One character split across two reads must decode as one character."""
+    runner = _fresh_runner_with_decoder()
+    rec = Recorder(runner)
+
+    full = "héllo 雪 ✅ end".encode("utf-8")
+    split = len(full) // 2
+    runner._consume(full[:split])
+    assert rec.output == []  # nothing decodable is emitted early
+    runner._consume(full[split:])
+    runner._consume(b"\n")
+
+    assert rec.output == ["héllo 雪 ✅ end\n"]
+    assert all(isinstance(chunk, str) for chunk in rec.output)
+    assert "\ufffd" not in "".join(rec.output)
+
+
+def test_multibyte_split_child_end_to_end(qtbot):
+    from strom.linux_gui.runner import CycleRunner
+
+    runner = CycleRunner()
+    rec = Recorder(runner)
+
+    runner.start(fake_spec("split_utf8.py"))
+    wait_state(qtbot, runner, RunnerState.Completed)
+
+    assert "".join(rec.output) == "héllo 雪 ✅ end\n"
+    assert all(isinstance(chunk, str) for chunk in rec.output)
+
+
+def test_large_unterminated_line_capped_with_notice(qtbot):
+    from strom.linux_gui.runner import CycleRunner
+
+    runner = CycleRunner()
+    rec = Recorder(runner)
+
+    runner.start(fake_spec("big_unterminated.py"))
+    wait_state(qtbot, runner, RunnerState.Completed)
+
+    joined = "".join(rec.output)
+    from strom.linux_gui.runner import _TRUNCATION_NOTICE
+
+    # The buffer cannot grow without limit: the unterminated line is emitted
+    # with a truncation notice, and every written character still reaches the
+    # log exactly once.
+    assert _TRUNCATION_NOTICE in joined
+    assert joined.count("y") == 40960
+    assert all(isinstance(chunk, str) for chunk in rec.output)
+
+
+def test_invalid_utf8_replaced_without_crash(qtbot):
+    from strom.linux_gui.runner import CycleRunner
+
+    runner = CycleRunner()
+    rec = Recorder(runner)
+
+    runner.start(fake_spec("invalid_utf8.py"))
+    wait_state(qtbot, runner, RunnerState.Completed)
+
+    # Invalid bytes become U+FFFD replacement characters; the run still
+    # completes and the text stays plain (never HTML).
+    assert "".join(rec.output) == "\ufffd\ufffdafter invalid bytes\n"
+    assert "<" not in "".join(rec.output)
