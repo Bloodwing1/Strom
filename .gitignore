@@ -20,4 +20,5 @@ plots/*
 /node_modules//build/
 /.coverage
 /dist/
+/build/
 .kiro

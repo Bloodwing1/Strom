@@ -49,6 +49,7 @@ Do not start a task whose dependencies are not complete. If a plan requirement t
 
 8. **Packaging verification** (plan §1 item 5 and §6 wheel bullet). Build a wheel, install it into a fresh environment without the repo on `sys.path`, and verify both launchers from outside the checkout.
    Done when: the installed `strom-gui` and `python -m strom.linux_gui` work from a foreign directory; `strom --help` works in an environment without GUI extras and the GUI launcher prints the install hint; the tested PySide6 version is recorded for the README task.
+   Result (macOS verification; Linux desktop acceptance remains task 11): wheel `strom-0.2.0-py3-none-any.whl` contains all five `strom.linux_gui` modules and no tests/build artifacts. Fresh venv with `strom[gui]` from the wheel: `strom-gui` and `python -m strom.linux_gui` both ran from `/tmp` with `strom` importing from site-packages (stayed alive, no errors). Fresh venv without GUI extras: `strom --help` exits 0; both GUI launchers print the PySide6 install hint and exit 2. **Tested PySide6 version for the README: 6.11.2** (constraint `PySide6>=6.8,<7`).
 
 9. **CI job** (plan §6, CI paragraph). Add the Linux GUI job to `.github/workflows/strom-tests.yml`.
    Done when: the new job installs the three extras, sets `QT_QPA_PLATFORM=offscreen`, runs the GUI suite, and type-checks the GUI modules; the existing CLI-only smoke job and coverage gate are unchanged and green.
