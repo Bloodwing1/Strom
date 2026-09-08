@@ -244,10 +244,12 @@ def test_arguments_reach_child_verbatim(qtbot):
     runner.start(spec)
     wait_state(qtbot, runner, RunnerState.Completed)
 
-    argv = json.loads("".join(rec.output))
+    argv_report = json.loads("".join(rec.output))
     # "-u" is an interpreter flag and never reaches the child's argv; the
     # literal arrives as exactly one argument, shell metacharacters intact.
-    assert argv == [literal]
+    assert argv_report["argv"] == [literal]
+    # The child's parent is this test process: no intermediate shell exists.
+    assert argv_report["ppid"] == os.getpid()
 
 
 def test_make_launch_spec_shape():

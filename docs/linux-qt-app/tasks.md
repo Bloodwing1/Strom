@@ -36,6 +36,16 @@ Do not start a task whose dependencies are not complete. If a plan requirement t
 
 7. **GUI test suite completion** (plan §6, "Required automated cases"). Add the remaining cases not covered by tasks 2–6.
    Done when: each bullet in the plan's required-cases list is either covered by an existing test or explicitly listed in this file as covered elsewhere; arguments with spaces and shell metacharacters are shown to reach the child verbatim; no test reads the developer's real `QSettings`.
+   Coverage audit (plan §6 bullet → tests in `tests/linux_gui/`):
+   - Arguments literal, no shell → `test_runner.py::test_arguments_reach_child_verbatim` (metacharacter argument arrives verbatim; child `ppid` equals the test process, proving no intermediate shell)
+   - Per-run `STROM_CONFIG_DIR`, parent env unchanged, inherited overrides preserved → `test_config_dir_env_override_changes_per_run`, `test_inherited_overrides_preserved_and_parent_env_unchanged`, `test_config_dir_env_absent_in_child_when_parent_unset`
+   - Startup failure / success / nonzero / crash / trailing output / split UTF-8 / large unterminated line → `test_failed_to_start`, `test_success_lifecycle`, `test_nonzero_exit_fails_and_recovers`, `test_crash_fails`, `test_trailing_output_without_newline_is_flushed`, `test_split_multibyte_character_decodes_across_chunks` + `test_multibyte_split_child_end_to_end`, `test_large_unterminated_line_capped_with_notice` (+ `test_truncation_discards_until_newline_then_resumes`)
+   - Repeated Run, failure recovery, terminal-once → `test_double_start_refused`, `test_nonzero_exit_fails_and_recovers`, `test_terminal_once_when_error_and_finish_overlap`, `test_terminal_state_handler_can_start_next_run`, `test_stale_callbacks_from_previous_or_foreign_processes_ignored`, and window-level `test_run_button_click_while_active_starts_nothing`
+   - Window responsive while child runs; close refused/accepted → `test_log_streams_incrementally_before_completion`, `test_clear_log_during_run_and_bounded_memory`, `test_close_refused_while_running_leaves_child_alive`, `test_close_refused_during_starting_leaves_child_alive`, `test_close_accepted_after_completion_saves_settings`
+   - Confirmation cancel / invalid directory / Browse cancel → `test_confirmation_cancel_starts_nothing`, `test_invalid_directory_blocks_confirmation`, `test_browse_cancel_preserves_path`
+   - Restored invalid settings / clear log / bounded memory → `test_malformed_settings_fall_back_to_defaults`, `test_clear_log_during_run_and_bounded_memory`
+   - No test reads the developer's real `QSettings`: every window test injects a per-test temporary INI `QSettings`; runner tests construct no settings; `test_app.py` monkeypatches imports only
+   - Wheel in a fresh environment → deferred to task 8 (packaging session); the no-GUI-extras CLI behavior is additionally verified there in a real fresh venv
 
 8. **Packaging verification** (plan §1 item 5 and §6 wheel bullet). Build a wheel, install it into a fresh environment without the repo on `sys.path`, and verify both launchers from outside the checkout.
    Done when: the installed `strom-gui` and `python -m strom.linux_gui` work from a foreign directory; `strom --help` works in an environment without GUI extras and the GUI launcher prints the install hint; the tested PySide6 version is recorded for the README task.

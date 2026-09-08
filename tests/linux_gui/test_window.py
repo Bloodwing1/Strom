@@ -272,6 +272,35 @@ def test_clear_log_during_run_and_bounded_memory(qtbot, make_window, monkeypatch
     assert window._log.document().blockCount() <= 2001
 
 
+def test_log_streams_incrementally_before_completion(qtbot, make_window, monkeypatch):
+    """Output appears while the cycle runs, not only at process exit."""
+    window = _run_confirmed(qtbot, make_window, monkeypatch)  # slow.py
+
+    qtbot.waitUntil(
+        lambda: "started" in window._log.toPlainText()
+        and window._runner.state is RunnerState.Running,
+        timeout=10000,
+    )
+    assert window._log.toPlainText().startswith("started")
+    assert window._run_button.isEnabled() is False  # form disabled mid-stream
+
+    wait_state(qtbot, window, RunnerState.Completed)
+    assert "done" in window._log.toPlainText()
+
+
+def test_run_button_click_while_active_starts_nothing(qtbot, make_window, monkeypatch):
+    """A window-level double-click guard: clicks during a run are no-ops."""
+    window = _run_confirmed(qtbot, make_window, monkeypatch)
+    wait_state(qtbot, window, RunnerState.Running)
+    process = window._runner._process
+
+    window._run_button.click()  # disabled button; click() must be a no-op
+
+    assert window._runner._process is process  # no second child spawned
+    wait_state(qtbot, window, RunnerState.Completed)
+    assert window._runner.state is RunnerState.Completed
+
+
 # --- close behavior (plan §4, task 6) ---
 
 
