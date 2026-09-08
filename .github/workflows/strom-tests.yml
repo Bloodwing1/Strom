@@ -48,6 +48,12 @@ jobs:
           python-version: "3.12.8"
           cache: pip
 
+      # QtGui links EGL even when no display server is used.
+      - name: Install Linux Qt runtime library
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libegl1
+
       - name: Install package with dev, GUI, and GUI-test tooling
         run: |
           python -m pip install --upgrade pip

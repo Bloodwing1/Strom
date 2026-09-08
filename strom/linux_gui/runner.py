@@ -150,12 +150,12 @@ class CycleRunner(QObject):
     # --- signal handlers (all ignore non-current processes) ---
 
     def _on_started(self, process: QProcess) -> None:
-        if self._process is not process:
+        if process is None or self._process is not process:
             return
         self._set_state(RunnerState.Running)
 
     def _on_error(self, process: QProcess, error: QProcess.ProcessError) -> None:
-        if self._process is not process:
+        if process is None or self._process is not process:
             return
         if error == QProcess.ProcessError.FailedToStart:
             # Do not rely on finished arriving for this case.
@@ -170,7 +170,7 @@ class CycleRunner(QObject):
     def _on_finished(
         self, process: QProcess, exit_code: int, exit_status: QProcess.ExitStatus
     ) -> None:
-        if self._process is not process:
+        if process is None or self._process is not process:
             return
         # Drain anything still buffered before deciding the terminal state so
         # the log is complete when the status label updates.
@@ -191,7 +191,7 @@ class CycleRunner(QObject):
             self._finalize(process, RunnerState.Failed)
 
     def _on_ready_read(self, process: QProcess) -> None:
-        if self._process is not process:
+        if process is None or self._process is not process:
             return
         self._consume(process.readAllStandardOutput().data())
 
@@ -259,7 +259,7 @@ class CycleRunner(QObject):
 
     def _finalize(self, process: QProcess, state: RunnerState) -> None:
         """Clean up the current process and emit one terminal transition."""
-        if self._process is not process:
+        if process is None or self._process is not process:
             return
         # The process is stopped by the time this runs (or never started).
         # Clear ownership before emitting: same-thread Qt slots run
