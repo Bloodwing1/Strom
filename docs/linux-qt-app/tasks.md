@@ -53,9 +53,11 @@ Do not start a task whose dependencies are not complete. If a plan requirement t
 
 9. **CI job** (plan §6, CI paragraph). Add the Linux GUI job to `.github/workflows/strom-tests.yml`.
    Done when: the new job installs the three extras, sets `QT_QPA_PLATFORM=offscreen`, runs the GUI suite, and type-checks the GUI modules; the existing CLI-only smoke job and coverage gate are unchanged and green.
+   Result: `gui` job added to `.github/workflows/strom-tests.yml` (ubuntu-latest, `QT_QPA_PLATFORM=offscreen`, `pip install -e ".[dev,gui,gui-dev]"`, `pytest tests/linux_gui`, `mypy strom/linux_gui` with PySide6 installed). Existing `test` and `smoke` jobs untouched; YAML validity, the offscreen suite, GUI mypy, and the coverage floor verified locally. CI run on the Linux runner is the remaining confirmation (push).
 
 10. **Documentation** (plan §7). Update the README per the plan's list.
     Done when: every item in the plan §7 README list is present, the "single supported entry point" wording is revised, and the tested distribution and PySide6 version from task 8 appear in the text.
+   Result: README gains a "Desktop GUI (Linux)" section covering install (`pip install '.[gui]'`), both launchers, Python/Qt requirements, config-file layout reference, environment precedence (`STROM_CONFIG_DIR` export, credential overrides), suggestion order (saved path → `STROM_CONFIG_DIR` → `./config`), one-cycle semantics with confirmation, keep-window-open long-running behavior, the explicit no-Stop limitation, and Linux troubleshooting (xcb plugin errors, no global `QT_QPA_PLATFORM` forcing, `QT_DEBUG_PLUGINS=1`, Wayland). The Usage entry-point wording now states the GUI delegates to the unchanged CLI. Text records tested PySide6 6.11.2 and states explicitly that offscreen results are not desktop verification; the tested Linux distribution/session will be added by task 11.
 
 11. **Manual Linux verification** (plan §6, "Manual acceptance"). Perform the on-desktop checks on real Linux; this needs hardware and cannot be done in an automated session.
     Done when: the checked items and the environment (distribution, X11/Wayland session, scaling, PySide6 version) are recorded, and any check that could not be run is listed explicitly, as the plan's completion criteria require.

@@ -78,8 +78,10 @@ Python (and Node for the git hooks) is provisioned automatically.
 
 [Technical documentation](https://janbalanya.com/strom-docs/)
 
-The single supported entry point is the `strom` CLI (also available as
-`python -m strom`):
+The `strom` CLI (also available as `python -m strom`) is the single supported
+entry point for the control logic. The optional desktop GUI (below) delegates
+every run to this same, unchanged code path — it is a convenient front end,
+not a separate implementation:
 
 ```sh
 strom --config-dir ./config --horizon-hours 24 --log-level INFO
@@ -92,6 +94,77 @@ The control policy executes a bounded duty cycle: the optimizer's fractional
 output for each interval is translated into an exact ON/OFF schedule for the
 smart plug, and an independent watchdog forces the plug off if it ever stays
 on too long.
+
+## Desktop GUI (Linux)
+
+An optional native desktop GUI built on Qt 6 Widgets (PySide6) is available.
+It was verified against **PySide6 6.11.2**; desktop acceptance testing on a
+real Linux X11/Wayland session is tracked separately, so offscreen test
+results should not be read as desktop verification.
+
+Install it on top of the normal installation:
+
+```sh
+pip install '.[gui]'
+```
+
+Then launch it from any directory with either of:
+
+```sh
+strom-gui
+python -m strom.linux_gui
+```
+
+Both launchers need Python 3.12.8 and a working Qt 6 desktop environment
+(X11 or Wayland); a PySide6 wheel does not remove your distribution's shared
+library requirements.
+
+### What the GUI does in this version
+
+- Select a configuration directory with the same file layout as the CLI
+  (`tapologin.env`, `price_api_key.txt`, `weather_api_key.txt`, optional
+  `house_config.json` — see Installation above).
+- Choose the optimization horizon (1–48 hours, default 24) and the log level
+  (INFO, WARNING, or ERROR).
+- Run **one** control cycle. A confirmation dialog states that this operates
+  the real smart plug and may switch your heater on for one control interval
+  (about one hour) before anything happens; Cancel is the default.
+- Watch the cycle's output in a bounded, read-only log while it runs.
+
+### Configuration and environment precedence
+
+- The GUI starts the CLI with the selected directory exported as
+  `STROM_CONFIG_DIR` for that run; the CLI resolves the config path explicitly
+  and never depends on the directory the GUI was launched from.
+- Credentials exported as environment variables (`WEATHER_API_KEY`,
+  `PRICE_API_KEY`) override the corresponding files, exactly as with the CLI.
+- The GUI remembers the last used directory, horizon, log level, and window
+  geometry. The initial directory suggestion is the saved path, then
+  `STROM_CONFIG_DIR`, then `./config`. Only non-secret preferences are
+  stored; API keys never enter the GUI's settings.
+
+### Long-running behavior and limitations
+
+- Keep the window open until the cycle finishes. Closing while a cycle is
+  starting or running is refused with an explanation, and the child process
+  is never killed or detached; the run button and form stay disabled until
+  the cycle exits. There is deliberately **no Stop/Force-quit** control in
+  this version: no silent process termination.
+- Only one cycle runs at a time; duplicate starts are prevented.
+- Not included in this version: credential editing, house-parameter editing,
+  charts, scheduling, tray icon, autostart, device discovery, and manual
+  ON/OFF control.
+
+### Linux troubleshooting
+
+- An error such as "xcb plugin found but could not load" usually means
+  missing system shared libraries or a mixed Qt installation — not a missing
+  Python import. Check Qt's Linux requirements for the libraries your
+  distribution needs.
+- Do not force `QT_QPA_PLATFORM=xcb` globally or overwrite Qt plugin paths.
+  To diagnose a plugin problem, run once with `QT_DEBUG_PLUGINS=1` and clear
+  any stray Qt environment settings instead of hard-coding a workaround.
+- On Wayland the GUI uses the Wayland platform plugin automatically.
 
 ## Development
 
