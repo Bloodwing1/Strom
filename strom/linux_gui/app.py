@@ -1,28 +1,31 @@
-"""Entry point and QApplication setup for the Strom GUI.
+"""Entry point and QApplication setup for the Strom Linux GUI.
 
-This module is the single entry point shared by the ``strom-gui`` script and
-``python -m strom.linux_gui`` (see ``strom/linux_gui/__main__.py``). It creates exactly one
-``QApplication`` and never touches Qt at import time, so importing ``strom``
-stays free of any Qt dependency.
+The ``strom-gui`` script and ``python -m strom.linux_gui`` both call
+:func:`run`. Qt is loaded only inside that function, so importing ``strom``
+does not require the optional GUI dependencies.
 """
 
 from __future__ import annotations
 
+import importlib
 import sys
 
 
 def run() -> int:
     """Build the GUI application and run its event loop."""
     try:
-        from PySide6 import QtWidgets
-    except ImportError as exc:
-        # Report only a genuinely missing PySide6 as a missing dependency;
-        # unrelated import errors inside PySide6 propagate unchanged.
-        if exc.name is None or exc.name == "PySide6" or exc.name.startswith("PySide6."):
-            print("The Strom GUI needs PySide6, which is not installed.", file=sys.stderr)
-            print("Install it with: python -m pip install 'strom[gui]'", file=sys.stderr)
-            raise SystemExit(2) from exc
-        raise
+        importlib.import_module("PySide6")
+    except ModuleNotFoundError as exc:
+        # Only a missing top-level binding gets the installation hint. Missing
+        # transitive modules and other PySide6 initialization failures retain
+        # their original traceback.
+        if exc.name != "PySide6":
+            raise
+        print("The Strom GUI needs PySide6, which is not installed.", file=sys.stderr)
+        print("Install it with: python -m pip install 'strom[gui]'", file=sys.stderr)
+        return 2
+
+    from PySide6 import QtWidgets
 
     app = QtWidgets.QApplication(sys.argv)
     # Stable names must be set before any QSettings object is constructed.
@@ -34,7 +37,3 @@ def run() -> int:
     window = MainWindow()
     window.show()
     return app.exec()
-
-
-if __name__ == "__main__":  # pragma: no cover
-    sys.exit(run())

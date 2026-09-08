@@ -24,7 +24,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 _MAX_PENDING_CHARS = 16 * 1024
-_TRUNCATION_NOTICE = "[... line truncated: exceeded 16 KiB ...]"
+_TRUNCATION_NOTICE = "[... line truncated after 16,384 characters ...]"
 
 
 class RunnerState(enum.Enum):
@@ -94,6 +94,7 @@ class CycleRunner(QObject):
         self._detail: str | None = None
         self._decoder: codecs.IncrementalDecoder | None = None
         self._pending = ""
+        self._discarding_line = False
 
     @property
     def state(self) -> RunnerState:
@@ -139,6 +140,7 @@ class CycleRunner(QObject):
         self._detail = None
         self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._pending = ""
+        self._discarding_line = False
         # Enter Starting synchronously so the window can disable the form
         # before returning to the event loop.
         self._set_state(RunnerState.Starting)
@@ -196,34 +198,56 @@ class CycleRunner(QObject):
     # --- output handling ---
 
     def _consume(self, data: bytes | bytearray | memoryview) -> None:
-        """Decode a chunk incrementally and emit its complete lines.
-
-        One signal can contain half a multibyte character or many lines, so
-        decoding is incremental and incomplete lines stay buffered.
-        """
+        """Decode a chunk incrementally and emit bounded plain-text lines."""
         if self._decoder is None:
             return
-        self._pending += self._decoder.decode(data)
-        pending = self._pending
-        while "\n" in pending:
-            line, _, rest = pending.partition("\n")
-            self.outputText.emit(line + "\n")
-            pending = rest
-        # Bound even an unterminated line so a silent child that keeps
-        # writing cannot grow the buffer without limit.
-        if len(pending) > _MAX_PENDING_CHARS:
-            self.outputText.emit(pending + _TRUNCATION_NOTICE + "\n")
-            pending = ""
-        self._pending = pending
+        self._consume_text(self._decoder.decode(data))
+
+    def _consume_text(self, text: str) -> None:
+        """Emit complete lines, retaining at most one bounded partial line."""
+        remaining = self._pending + text
+        self._pending = ""
+
+        while remaining:
+            if self._discarding_line:
+                newline = remaining.find("\n")
+                if newline < 0:
+                    return
+                self._discarding_line = False
+                remaining = remaining[newline + 1:]
+                continue
+
+            newline = remaining.find("\n")
+            if newline >= 0:
+                line = remaining[:newline]
+                remaining = remaining[newline + 1:]
+                if len(line) > _MAX_PENDING_CHARS:
+                    self.outputText.emit(
+                        line[:_MAX_PENDING_CHARS] + _TRUNCATION_NOTICE + "\n"
+                    )
+                else:
+                    self.outputText.emit(line + "\n")
+                continue
+
+            if len(remaining) > _MAX_PENDING_CHARS:
+                self.outputText.emit(
+                    remaining[:_MAX_PENDING_CHARS] + _TRUNCATION_NOTICE + "\n"
+                )
+                self._discarding_line = True
+            else:
+                self._pending = remaining
+            return
 
     def _flush_output(self) -> None:
-        """Flush the decoder and any pending partial line at process exit."""
+        """Flush the decoder and any bounded partial line at process exit."""
         if self._decoder is not None:
-            self._pending += self._decoder.decode(b"", True)
+            tail = self._decoder.decode(b"", True)
             self._decoder = None
-        if self._pending:
+            self._consume_text(tail)
+        if not self._discarding_line and self._pending:
             self.outputText.emit(self._pending)
-            self._pending = ""
+        self._pending = ""
+        self._discarding_line = False
 
     # --- state transitions and cleanup ---
 
@@ -234,10 +258,15 @@ class CycleRunner(QObject):
         self.stateChanged.emit(state)
 
     def _finalize(self, process: QProcess, state: RunnerState) -> None:
-        """Idempotent terminal transition; only reachable for a current process."""
-        self._set_state(state)
-        # The process is stopped by the time this runs (or never started), so
-        # releasing the reference now is safe.
+        """Clean up the current process and emit one terminal transition."""
+        if self._process is not process:
+            return
+        # The process is stopped by the time this runs (or never started).
+        # Clear ownership before emitting: same-thread Qt slots run
+        # synchronously and may start the next run from stateChanged.
         process.deleteLater()
         self._process = None
+        self._decoder = None
         self._pending = ""
+        self._discarding_line = False
+        self._set_state(state)

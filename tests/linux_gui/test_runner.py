@@ -10,12 +10,17 @@ import json
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QProcess
+import pytest
 
-from strom.linux_gui.runner import LaunchSpec, RunnerState, make_launch_spec
+pytest.importorskip("PySide6", reason="PySide6 is not installed (GUI extras missing)")
+pytest.importorskip("pytestqt", reason="pytest-qt is not installed (gui-dev extra missing)")
+
+from PySide6.QtCore import QProcess  # noqa: E402
+
+from strom.linux_gui.runner import LaunchSpec, RunnerState, make_launch_spec  # noqa: E402
 
 FAKE_CHILDREN = Path(__file__).parent / "fake_children"
-TERMinals = (RunnerState.Completed, RunnerState.Failed, RunnerState.FailedToStart)
+TERMINAL_STATES = (RunnerState.Completed, RunnerState.Failed, RunnerState.FailedToStart)
 
 
 def fake_spec(name: str, config_dir: Path | None = None) -> LaunchSpec:
@@ -37,7 +42,7 @@ class Recorder:
         runner.outputText.connect(self.output.append)
 
     def terminal_transitions(self) -> int:
-        return sum(1 for state in self.states if state in TERMinals)
+        return sum(1 for state in self.states if state in TERMINAL_STATES)
 
 
 def wait_state(qtbot, runner, state: RunnerState) -> None:
@@ -182,6 +187,35 @@ def test_stale_callbacks_from_previous_or_foreign_processes_ignored(qtbot):
     assert rec.terminal_transitions() == 2  # one per run, never more
 
 
+def test_terminal_state_handler_can_start_next_run(qtbot):
+    from strom.linux_gui.runner import CycleRunner
+
+    runner = CycleRunner()
+    rec = Recorder(runner)
+    restarted = False
+
+    def restart_once(state):
+        nonlocal restarted
+        if state is RunnerState.Completed and not restarted:
+            restarted = True
+            assert runner.start(fake_spec("success.py")) is True
+
+    runner.stateChanged.connect(restart_once)
+    runner.start(fake_spec("success.py"))
+    qtbot.waitUntil(lambda: rec.terminal_transitions() == 2, timeout=10000)
+
+    assert runner.state is RunnerState.Completed
+    assert runner._process is None
+    assert rec.states == [
+        RunnerState.Starting,
+        RunnerState.Running,
+        RunnerState.Completed,
+        RunnerState.Starting,
+        RunnerState.Running,
+        RunnerState.Completed,
+    ]
+
+
 def test_trailing_output_without_newline_is_flushed(qtbot):
     from strom.linux_gui.runner import CycleRunner
 
@@ -252,15 +286,12 @@ def test_split_multibyte_character_decodes_across_chunks():
     runner = _fresh_runner_with_decoder()
     rec = Recorder(runner)
 
-    full = "héllo 雪 ✅ end".encode("utf-8")
-    split = len(full) // 2
-    runner._consume(full[:split])
-    assert rec.output == []  # nothing decodable is emitted early
-    runner._consume(full[split:])
-    runner._consume(b"\n")
+    snow = "雪".encode("utf-8")
+    runner._consume(b"before " + snow[:1])
+    assert rec.output == []
+    runner._consume(snow[1:] + b" after\n")
 
-    assert rec.output == ["héllo 雪 ✅ end\n"]
-    assert all(isinstance(chunk, str) for chunk in rec.output)
+    assert rec.output == ["before 雪 after\n"]
     assert "\ufffd" not in "".join(rec.output)
 
 
@@ -289,12 +320,24 @@ def test_large_unterminated_line_capped_with_notice(qtbot):
     joined = "".join(rec.output)
     from strom.linux_gui.runner import _TRUNCATION_NOTICE
 
-    # The buffer cannot grow without limit: the unterminated line is emitted
-    # with a truncation notice, and every written character still reaches the
-    # log exactly once.
-    assert _TRUNCATION_NOTICE in joined
-    assert joined.count("y") == 40960
-    assert all(isinstance(chunk, str) for chunk in rec.output)
+    # Only the bounded prefix reaches the log. The remainder is discarded
+    # until a newline or process exit, with exactly one visible notice.
+    assert joined.count(_TRUNCATION_NOTICE) == 1
+    assert joined.count("y") == 16 * 1024
+    assert len(runner._pending) <= 16 * 1024
+
+
+def test_truncation_discards_until_newline_then_resumes():
+    runner = _fresh_runner_with_decoder()
+    rec = Recorder(runner)
+
+    runner._consume(b"y" * (16 * 1024 + 100))
+    runner._consume(b"still discarded\nnext line\n")
+
+    joined = "".join(rec.output)
+    assert joined.count("y") == 16 * 1024
+    assert "still discarded" not in joined
+    assert joined.endswith("next line\n")
 
 
 def test_invalid_utf8_replaced_without_crash(qtbot):
@@ -307,6 +350,5 @@ def test_invalid_utf8_replaced_without_crash(qtbot):
     wait_state(qtbot, runner, RunnerState.Completed)
 
     # Invalid bytes become U+FFFD replacement characters; the run still
-    # completes and the text stays plain (never HTML).
+    # completes normally.
     assert "".join(rec.output) == "\ufffd\ufffdafter invalid bytes\n"
-    assert "<" not in "".join(rec.output)

@@ -1,17 +1,10 @@
-"""Fixtures for the GUI test suite.
+"""Shared test environment for the Linux GUI suite.
 
-The whole directory skips cleanly when PySide6 or pytest-qt is absent, so the
-default CLI test workflow (which collects ``tests/``) keeps working without
-the GUI extras installed.
+Tests that require Qt perform their dependency skips at module scope before
+importing GUI modules. This file only selects Qt's headless platform; an
+explicit value supplied by the caller wins.
 """
 
 import os
 
-import pytest
-
-pytest.importorskip("PySide6", reason="PySide6 is not installed (GUI extras missing)")
-pytest.importorskip("pytestqt", reason="pytest-qt is not installed (gui-dev extra missing)")
-
-# Headless default so tests never open a real window; an explicit value set by
-# the caller wins.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
