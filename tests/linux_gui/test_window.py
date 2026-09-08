@@ -272,6 +272,83 @@ def test_clear_log_during_run_and_bounded_memory(qtbot, make_window, monkeypatch
     assert window._log.document().blockCount() <= 2001
 
 
+# --- close behavior (plan §4, task 6) ---
+
+
+def _run_confirmed(qtbot, make_window, monkeypatch, child="slow.py"):
+    """Start a fake-child cycle through the normal run flow."""
+    window = make_window(spec_factory=child_factory(child))
+    window._config_dir_edit.setText("/tmp")
+    monkeypatch.setattr(window, "_confirm_run", lambda: True)
+    window.show()
+    window._run_button.click()
+    return window
+
+
+def test_close_refused_while_running_leaves_child_alive(
+    qtbot, make_window, monkeypatch
+):
+    window = _run_confirmed(qtbot, make_window, monkeypatch)
+    wait_state(qtbot, window, RunnerState.Running)
+
+    refusals = []
+    monkeypatch.setattr(window, "_explain_refused_close", lambda: refusals.append(1))
+
+    window.close()
+
+    assert refusals == [1]
+    assert window.isVisible()  # window stays open and owned
+    assert window._runner.is_active()
+    assert window._runner._process is not None  # child not destroyed
+
+    # The child outlives the refused close and finishes normally.
+    wait_state(qtbot, window, RunnerState.Completed)
+    assert window._runner.state is RunnerState.Completed
+    assert "done" in window._log.toPlainText()
+    assert window._run_button.isEnabled()  # window stayed responsive
+
+
+def test_close_refused_during_starting_leaves_child_alive(
+    qtbot, make_window, monkeypatch
+):
+    window = _run_confirmed(qtbot, make_window, monkeypatch)
+    assert window._runner.state is RunnerState.Starting
+
+    refusals = []
+    monkeypatch.setattr(window, "_explain_refused_close", lambda: refusals.append(1))
+
+    window.close()
+
+    assert refusals == [1]
+    assert window.isVisible()
+    assert window._runner._process is not None
+
+    wait_state(qtbot, window, RunnerState.Completed)
+    assert window._runner.state is RunnerState.Completed  # child never killed
+    assert "done" in window._log.toPlainText()
+
+
+def test_close_accepted_after_completion_saves_settings(
+    qtbot, make_window, tmp_path, monkeypatch
+):
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    window = _run_confirmed(qtbot, make_window, monkeypatch, child="success.py")
+    wait_state(qtbot, window, RunnerState.Completed)
+
+    window._horizon.setValue(9)
+    window._config_dir_edit.setText(str(config_dir))
+
+    refusals = []
+    monkeypatch.setattr(window, "_explain_refused_close", lambda: refusals.append(1))
+    window.close()
+
+    assert refusals == []
+    assert window.isHidden()  # close accepted
+    assert window._settings.value("configDir") == str(config_dir)
+    assert int(window._settings.value("horizonHours")) == 9
+
+
 # --- defensive settings restore ---
 
 

@@ -47,6 +47,12 @@ _CONFIRM_TEXT = (
     "This operates the real smart plug and may switch your heater on for one "
     "control interval (about one hour)."
 )
+_CLOSE_REFUSED_TEXT = (
+    "A control cycle is starting or running, so the window must stay open "
+    "until the cycle finishes. There is no safe way to cancel a running "
+    "cycle from here; the run button and form are disabled until the child "
+    "process exits."
+)
 
 SpecFactory = Callable[[Path, int, str], LaunchSpec]
 
@@ -236,6 +242,16 @@ class MainWindow(QtWidgets.QMainWindow):
         box.exec()
         return box.clickedButton() is run_button
 
+    def _explain_refused_close(self) -> None:
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Cycle in progress")
+        box.setText(_CLOSE_REFUSED_TEXT)
+        ok_button = box.addButton(
+            "OK", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+        )
+        box.setDefaultButton(ok_button)
+        box.exec()
+
     # --- runner bindings ---
 
     def _on_runner_state(self, state: RunnerState) -> None:
@@ -258,3 +274,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _append_log(self, text: str) -> None:
         self._log.appendPlainText(text.rstrip("\n"))
+
+    # --- close behavior (plan §4) ---
+
+    def closeEvent(self, event) -> None:
+        if self._runner.is_active():
+            # Refuse without touching the child: no waitForFinished, no kill,
+            # no detach. The runner (and its QProcess) stays owned by this
+            # window until the cycle exits on its own.
+            self._explain_refused_close()
+            event.ignore()
+            return
+        self.save_settings()
+        event.accept()
