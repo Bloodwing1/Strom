@@ -86,6 +86,16 @@ def test_initial_controls(make_window):
     assert window._log.isReadOnly()
     assert window._log.maximumBlockCount() == 2000
 
+    # Explicit buddies make keyboard focus predictable, including the field
+    # whose value and Browse button share a layout row.
+    assert window._config_dir_label.buddy() is window._config_dir_edit
+    assert window._horizon_label.buddy() is window._horizon
+    assert window._log_level_label.buddy() is window._log_level
+    assert window._log_label.buddy() is window._log
+    assert window._status_label.accessibleName() == "Cycle status"
+    assert window._busy.accessibleName() == "Cycle progress"
+    assert window._log.accessibleName() == "Cycle log"
+
 
 # --- browse dialog ---
 
@@ -145,6 +155,25 @@ def test_invalid_directory_blocks_confirmation(qtbot, make_window, tmp_path, mon
     assert window._runner.state is RunnerState.Idle
 
 
+def test_path_resolution_error_blocks_confirmation(make_window, monkeypatch):
+    window = make_window(spec_factory=child_factory(record=[]))
+    confirmed = []
+    monkeypatch.setattr(window, "_confirm_run", lambda: confirmed.append(True) or True)
+
+    def fail_resolve(path):
+        raise RuntimeError("symlink loop")
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+    window._config_dir_edit.setText("loop")
+    window._run_button.click()
+
+    assert confirmed == []
+    assert window._runner.state is RunnerState.Idle
+    assert window._status_label.text() == (
+        "Could not resolve configuration directory: symlink loop"
+    )
+
+
 def test_confirmation_cancel_starts_nothing(qtbot, make_window, tmp_path, monkeypatch):
     record = []
     window = make_window(spec_factory=child_factory(record=record))
@@ -199,6 +228,23 @@ def test_run_flow_disables_controls_and_recovers(qtbot, make_window, tmp_path, m
     ):
         assert widget.isEnabled()
     assert window._busy.isHidden()
+
+
+def test_accepted_relative_path_is_persisted_as_absolute(
+    qtbot, make_window, tmp_path, monkeypatch
+):
+    config_dir = tmp_path / "relative-cfg"
+    config_dir.mkdir()
+    monkeypatch.chdir(tmp_path)
+    window = make_window(spec_factory=child_factory("success.py"))
+    window._config_dir_edit.setText("relative-cfg")
+    monkeypatch.setattr(window, "_confirm_run", lambda: True)
+
+    window._run_button.click()
+    wait_state(qtbot, window, RunnerState.Completed)
+
+    assert window._config_dir_edit.text() == str(config_dir)
+    assert window._settings.value("configDir") == str(config_dir)
 
 
 def test_accepted_run_persists_form_values(qtbot, make_window, tmp_path, monkeypatch):

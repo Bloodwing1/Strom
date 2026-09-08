@@ -136,8 +136,10 @@ library requirements.
 - The GUI starts the CLI with the selected directory exported as
   `STROM_CONFIG_DIR` for that run; the CLI resolves the config path explicitly
   and never depends on the directory the GUI was launched from.
-- Credentials exported as environment variables (`WEATHER_API_KEY`,
-  `PRICE_API_KEY`) override the corresponding files, exactly as with the CLI.
+- Credentials and keys exported as environment variables (`EMAIL`,
+  `PASSWORD`, `DEVICEIP`, `WEATHER_API_KEY`, and `PRICE_API_KEY`) override
+  values from `tapologin.env` and the corresponding key files, exactly as
+  with the CLI.
 - The GUI remembers the last used directory, horizon, log level, and window
   geometry. The initial directory suggestion is the saved path, then
   `STROM_CONFIG_DIR`, then `./config`. Only non-secret preferences are

@@ -102,11 +102,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         dir_row = QtWidgets.QHBoxLayout()
         self._config_dir_edit = QtWidgets.QLineEdit(central)
+        self._config_dir_edit.setAccessibleName("Configuration directory")
         dir_row.addWidget(self._config_dir_edit, stretch=1)
         self._browse_button = QtWidgets.QPushButton("Browse…", central)
         self._browse_button.clicked.connect(self._on_browse_clicked)
         dir_row.addWidget(self._browse_button)
-        form.addRow("Configuration directory:", dir_row)
+        self._config_dir_label = QtWidgets.QLabel("Configuration directory:", central)
+        self._config_dir_label.setBuddy(self._config_dir_edit)
+        form.addRow(self._config_dir_label, dir_row)
 
         self._help_label = QtWidgets.QLabel(_HELP_TEXT, central)
         self._help_label.setWordWrap(True)
@@ -115,11 +118,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._horizon = QtWidgets.QSpinBox(central)
         self._horizon.setRange(_MIN_HORIZON, _MAX_HORIZON)
         self._horizon.setValue(_DEFAULT_HORIZON)
-        form.addRow("Optimization horizon (hours):", self._horizon)
+        self._horizon_label = QtWidgets.QLabel(
+            "Optimization horizon (hours):", central
+        )
+        self._horizon_label.setBuddy(self._horizon)
+        form.addRow(self._horizon_label, self._horizon)
 
         self._log_level = QtWidgets.QComboBox(central)
         self._log_level.addItems(_LOG_LEVELS)
-        form.addRow("Log level:", self._log_level)
+        self._log_level_label = QtWidgets.QLabel("Log level:", central)
+        self._log_level_label.setBuddy(self._log_level)
+        form.addRow(self._log_level_label, self._log_level)
 
         self._cycle_label = QtWidgets.QLabel(_CYCLE_TEXT, central)
         self._cycle_label.setWordWrap(True)
@@ -130,17 +139,23 @@ class MainWindow(QtWidgets.QMainWindow):
         outer.addWidget(self._run_button)
 
         self._status_label = QtWidgets.QLabel(RunnerState.Idle.value, central)
+        self._status_label.setAccessibleName("Cycle status")
         self._status_label.setWordWrap(True)
         outer.addWidget(self._status_label)
 
         self._busy = QtWidgets.QProgressBar(central)
+        self._busy.setAccessibleName("Cycle progress")
         self._busy.setRange(0, 0)  # indeterminate; no fake percentage
         self._busy.setVisible(False)
         outer.addWidget(self._busy)
 
+        self._log_label = QtWidgets.QLabel("Cycle log:", central)
+        outer.addWidget(self._log_label)
         self._log = QtWidgets.QPlainTextEdit(central)
+        self._log.setAccessibleName("Cycle log")
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(_LOG_MAX_BLOCKS)
+        self._log_label.setBuddy(self._log)
         outer.addWidget(self._log, stretch=1)
 
         clear_row = QtWidgets.QHBoxLayout()
@@ -151,6 +166,12 @@ class MainWindow(QtWidgets.QMainWindow):
         outer.addLayout(clear_row)
 
         self.setCentralWidget(central)
+        self.setTabOrder(self._config_dir_edit, self._browse_button)
+        self.setTabOrder(self._browse_button, self._horizon)
+        self.setTabOrder(self._horizon, self._log_level)
+        self.setTabOrder(self._log_level, self._run_button)
+        self.setTabOrder(self._run_button, self._log)
+        self.setTabOrder(self._log, self._clear_button)
 
     # --- settings ---
 
@@ -212,7 +233,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not raw:
             self._status_label.setText("Select a configuration directory first.")
             return
-        config_dir = Path(raw).expanduser().resolve()
+        try:
+            config_dir = Path(raw).expanduser().resolve()
+        except (OSError, RuntimeError) as exc:
+            self._status_label.setText(
+                f"Could not resolve configuration directory: {exc}"
+            )
+            return
         if not config_dir.is_dir():
             self._status_label.setText(
                 f"Configuration directory is not a directory: {raw}"
@@ -220,6 +247,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self._confirm_run():
             return
+        # Persist and display the exact absolute path used by the child. This
+        # prevents a saved relative path from changing meaning when the GUI is
+        # later launched from another working directory.
+        self._config_dir_edit.setText(str(config_dir))
         spec = self._spec_factory(
             config_dir, self._horizon.value(), self._log_level.currentText()
         )
