@@ -7,6 +7,7 @@ tests never run the real CLI.
 
 import codecs
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -352,3 +353,69 @@ def test_invalid_utf8_replaced_without_crash(qtbot):
     # Invalid bytes become U+FFFD replacement characters; the run still
     # completes normally.
     assert "".join(rec.output) == "\ufffd\ufffdafter invalid bytes\n"
+
+
+# --- mandatory config routing (plan §3; task 4) ---
+
+
+def _probe_environment(qtbot, runner, spec):
+    """Run the probe child and return the environment entries it saw."""
+    rec = Recorder(runner)
+    runner.start(spec)
+    wait_state(qtbot, runner, RunnerState.Completed)
+    return json.loads("".join(rec.output))
+
+
+def test_config_dir_env_override_changes_per_run(qtbot, tmp_path):
+    from strom.linux_gui.runner import CycleRunner
+
+    runner = CycleRunner()
+    dir_a = tmp_path / "config A"
+    dir_b = tmp_path / "config B"
+    dir_a.mkdir()
+    dir_b.mkdir()
+
+    seen_a = _probe_environment(qtbot, runner, fake_spec("env_probe.py", dir_a))
+    assert seen_a["STROM_CONFIG_DIR"] == str(dir_a)
+
+    seen_b = _probe_environment(qtbot, runner, fake_spec("env_probe.py", dir_b))
+    assert seen_b["STROM_CONFIG_DIR"] == str(dir_b)
+
+
+def test_inherited_overrides_preserved_and_parent_env_unchanged(
+    qtbot, tmp_path, monkeypatch
+):
+    from strom.linux_gui.runner import CycleRunner
+
+    # Documented credential/key overrides exported in the GUI process must
+    # reach the child untouched.
+    monkeypatch.setenv("WEATHER_API_KEY", "weather-key-override")
+    monkeypatch.setenv("PRICE_API_KEY", "price-key-override")
+    parent_before = dict(os.environ)
+
+    runner = CycleRunner()
+    seen = _probe_environment(
+        qtbot, runner, fake_spec("env_probe.py", tmp_path / "cfg")
+    )
+
+    assert seen["WEATHER_API_KEY"] == "weather-key-override"
+    assert seen["PRICE_API_KEY"] == "price-key-override"
+
+    # The runner builds a per-child copy of the parent environment; the
+    # parent environment itself is never mutated by a run.
+    assert dict(os.environ) == parent_before
+
+
+def test_config_dir_env_absent_in_child_when_parent_unset(qtbot, tmp_path, monkeypatch):
+    """A run without an inherited STROM_CONFIG_DIR sets only the selected path."""
+    from strom.linux_gui.runner import CycleRunner
+
+    monkeypatch.delenv("STROM_CONFIG_DIR", raising=False)
+    parent_before = dict(os.environ)
+
+    runner = CycleRunner()
+    selected = tmp_path / "selected config dir"
+    seen = _probe_environment(qtbot, runner, fake_spec("env_probe.py", selected))
+
+    assert seen["STROM_CONFIG_DIR"] == str(selected)
+    assert dict(os.environ) == parent_before
