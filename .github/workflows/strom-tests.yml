@@ -34,6 +34,31 @@ jobs:
       - name: Deterministic tests with coverage floor (blocking)
         run: pytest --cov=strom --cov-report=term-missing --cov-fail-under=70
 
+  gui:
+    name: Linux GUI (offscreen)
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.8"
+          cache: pip
+
+      - name: Install package with dev, GUI, and GUI-test tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui,gui-dev]"
+
+      - name: GUI test suite (offscreen)
+        run: pytest tests/linux_gui
+
+      - name: Type-check GUI modules (PySide6 installed)
+        run: mypy strom/linux_gui
+
   smoke:
     name: Clean-install smoke test
     runs-on: ubuntu-latest
