@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 
 
 def run() -> int:
@@ -25,12 +26,18 @@ def run() -> int:
         print("Install it with: python -m pip install 'strom[gui]'", file=sys.stderr)
         return 2
 
-    from PySide6 import QtWidgets
+    from PySide6 import QtGui, QtWidgets
 
     app = QtWidgets.QApplication(sys.argv)
     # Stable names must be set before any QSettings object is constructed.
     app.setOrganizationName("Strom")
     app.setApplicationName("Strom")
+    app.setDesktopFileName("strom")
+    icon = QtGui.QIcon()
+    assets = Path(__file__).with_name("assets")
+    for size in (32, 48, 64, 128, 256, 512):
+        icon.addFile(str(assets / f"strom-{size}.png"))
+    app.setWindowIcon(icon)
 
     from strom.linux_gui.window import MainWindow
 

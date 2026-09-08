@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Strom
+Comment=Plan your home heating around electricity prices
+Exec=strom-gui
+Icon=strom
+Terminal=false
+Categories=Utility;
+StartupNotify=true

@@ -54,6 +54,9 @@ strom-gui = "strom.linux_gui.app:run"
 # The GUI lives in the strom.linux_gui subpackage; never package tests or build.
 include = ["strom", "strom.*"]
 
+[tool.setuptools.package-data]
+"strom.linux_gui" = ["assets/*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
