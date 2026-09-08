@@ -72,12 +72,41 @@ def test_multiple_backslash_passwords_roundtrip(tmp_path):
     }
 
 
-def test_truly_unrepresentable_combination_is_rejected(tmp_path):
-    # Both quoted forms break on a trailing backslash, and the unquoted
-    # form is lossy for these two values; no line order can fix that.
-    with pytest.raises(SetupError):
+def test_multiple_quoted_backslash_endings_roundtrip(tmp_path):
+    # This combination is representable by the supported dotenv parser;
+    # trailing backslashes alone do not prove that encoding must fail.
+    email, password = '"x@x.com\\', "a #b\\"
+    path = save_tapo_credentials(tmp_path, email, password, "192.168.1.42")
+    assert _parse_env_content(path.read_text()) == {
+        "EMAIL": email,
+        "PASSWORD": password,
+        "DEVICEIP": "192.168.1.42",
+    }
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("parser_raises", [False, True])
+def test_failed_roundtrip_never_writes_credentials(
+    tmp_path, monkeypatch, existing, parser_raises
+):
+    path = tmp_path / TAPO_FILE
+    if existing:
+        path.write_text("previous contents\n")
+
+    def failed_parse(content):
+        if parser_raises:
+            raise ValueError("unparseable .env line")
+        return {"PASSWORD": "different value"}
+
+    monkeypatch.setattr(
+        "strom.linux_gui.setup_files._parse_env_content", failed_parse
+    )
+    with pytest.raises(SetupError, match="cannot store"):
         save_tapo_credentials(tmp_path, '"x@x.com\\', "a #b\\", "192.168.1.42")
-    assert not (tmp_path / TAPO_FILE).exists()
+    if existing:
+        assert path.read_text() == "previous contents\n"
+    else:
+        assert not path.exists()
 
 
 def test_files_are_private(tmp_path):
