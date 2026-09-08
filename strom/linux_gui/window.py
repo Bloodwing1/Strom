@@ -4,16 +4,8 @@ The window is written for people who have never used a terminal: every
 technical term is explained in plain language, and the one-time setup can be
 completed by pasting keys into the window instead of creating files by hand.
 
-The settings folder is chosen for the user (``~/.config/strom``); power
-users reveal a custom-folder editor with the "Use a custom settings folder"
-toggle. Structure (top to bottom):
-
-1. ``Step 1 · Connect your accounts`` — paste-and-save fields for the
-   weather key, the electricity price token, and the smart plug account.
-   Saving writes the exact files the CLI already reads
-   (:mod:`strom.linux_gui.setup_files`), with mode 0600 for secrets.
-2. ``Step 2 · Run a heating cycle`` — horizon, log level, readiness
-   checklist, and the run button.
+Setup presents one account at a time, followed by a separate heating page.
+Advanced folder and logging controls are collapsed by default.
 
 Safety-critical behavior from the implementation plan is unchanged: the
 window owns a :class:`CycleRunner` and never touches the child process
@@ -55,15 +47,13 @@ _LOG_LEVELS = ("INFO", "WARNING", "ERROR")
 _DEFAULT_HORIZON = 24
 _MIN_HORIZON = 1
 _MAX_HORIZON = 48
-_INITIAL_SIZE = (860, 800)
+_INITIAL_SIZE = (720, 620)
 _LOG_MAX_BLOCKS = 2000
 _LOG_MIN_HEIGHT = 120
 
 _INTRO_TEXT = (
-    "Strom heats your home when electricity is cheap: it compares the "
-    "weather forecast with hourly electricity prices, then switches your "
-    "heater on at the best time. Nothing runs until you click the run "
-    "button."
+    "Plan your heating around lower electricity prices. "
+    "Nothing runs until you choose Run one cycle."
 )
 _FOLDER_HELP_TEXT = (
     "Your weather key, price token, and plug account are saved as small "
@@ -71,11 +61,6 @@ _FOLDER_HELP_TEXT = (
     "folder shown above; the folder is created automatically. Already using "
     "the strom command line? Tick 'Use a custom settings folder' and pick "
     "your existing folder so Strom finds your keys."
-)
-_SETUP_INTRO_TEXT = (
-    "Fill in each section once; Strom saves it for you. Values exported as "
-    "environment variables still override the saved files, exactly as with "
-    "the command line."
 )
 _HORIZON_HELP_TEXT = (
     "How far ahead Strom plans, in hours. This does not make the run take "
@@ -87,8 +72,7 @@ _LOG_LEVEL_HELP_TEXT = (
     "only failures."
 )
 _LOCATION_NOTE_TEXT = (
-    "This version uses Barcelona weather and Spanish (ES) electricity "
-    "prices by default; the README explains how to change them."
+    "Using Barcelona weather and Spanish (ES) electricity prices."
 )
 _CYCLE_TEXT = (
     "Clicking Run checks the weather and prices, then may switch your "
@@ -185,38 +169,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self._intro_label.setWordWrap(True)
         outer.addWidget(self._intro_label)
 
-        outer.addWidget(self._build_accounts_group(content))
-        outer.addWidget(self._build_run_group(content))
+        outer.setContentsMargins(28, 24, 28, 24)
+        outer.setSpacing(16)
+        title = QtWidgets.QLabel("Strom · Smarter heating", content)
+        font = title.font()
+        font.setPointSize(font.pointSize() + 6)
+        font.setBold(True)
+        title.setFont(font)
+        outer.insertWidget(0, title)
+
+        self._pages = QtWidgets.QStackedWidget(content)
+        self._setup_page = self._build_accounts_group(content)
+        self._pages.addWidget(self._setup_page)
+        self._heating_page = QtWidgets.QWidget(content)
+        heating = QtWidgets.QVBoxLayout(self._heating_page)
+        heating.setContentsMargins(0, 0, 0, 0)
+        heating.setSpacing(16)
+        heating.addWidget(self._build_run_group(self._heating_page))
+        self._edit_setup = QtWidgets.QPushButton("Manage accounts", content)
+        self._edit_setup.clicked.connect(self._open_setup)
+        heating.addWidget(self._edit_setup)
+        outer.addWidget(self._pages, 1)
 
         self._status_label = QtWidgets.QLabel(RunnerState.Idle.value, content)
         self._status_label.setAccessibleName("Cycle status")
         self._status_label.setWordWrap(True)
-        outer.addWidget(self._status_label)
+        heating.addWidget(self._status_label)
 
         self._busy = QtWidgets.QProgressBar(content)
         self._busy.setAccessibleName("Cycle progress")
         self._busy.setRange(0, 0)  # indeterminate; no fake percentage
         self._busy.setVisible(False)
-        outer.addWidget(self._busy)
+        heating.addWidget(self._busy)
 
         self._log_label = QtWidgets.QLabel(
             "Cycle log (technical details from the last run):", content
         )
-        outer.addWidget(self._log_label)
+        self._details_toggle = QtWidgets.QCheckBox("Show technical details", content)
+        heating.addWidget(self._details_toggle)
+        self._details = QtWidgets.QWidget(content)
+        details = QtWidgets.QVBoxLayout(self._details)
+        details.setContentsMargins(0, 0, 0, 0)
+        self._details_toggle.toggled.connect(self._details.setVisible)
+        self._details.hide()
+        heating.addWidget(self._details)
+        details.addWidget(self._log_label)
         self._log = QtWidgets.QPlainTextEdit(content)
         self._log.setAccessibleName("Cycle log")
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(_LOG_MAX_BLOCKS)
         self._log.setMinimumHeight(_LOG_MIN_HEIGHT)
         self._log_label.setBuddy(self._log)
-        outer.addWidget(self._log, stretch=1)
+        details.addWidget(self._log, stretch=1)
 
         clear_row = QtWidgets.QHBoxLayout()
         clear_row.addStretch(1)
         self._clear_button = QtWidgets.QPushButton("Clear log", content)
         self._clear_button.clicked.connect(self._log.clear)
         clear_row.addWidget(self._clear_button)
-        outer.addLayout(clear_row)
+        details.addLayout(clear_row)
+        heating.addStretch(1)
+        self._pages.addWidget(self._heating_page)
 
         # The guided setup needs more vertical space than small screens
         # offer; a scroll area keeps every control at its natural height
@@ -229,8 +242,47 @@ class MainWindow(QtWidgets.QMainWindow):
         self._build_tab_order()
 
     def _build_accounts_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Step 1 · Connect your accounts (one-time)", parent)
+        group = QtWidgets.QGroupBox("Set up Strom", parent)
+        group.setFlat(True)
         layout = QtWidgets.QVBoxLayout(group)
+        layout.setSpacing(16)
+        self._step_label = QtWidgets.QLabel(group)
+        self._step_label.setAccessibleName("Setup progress")
+        layout.addWidget(self._step_label)
+        self._account_pages = QtWidgets.QStackedWidget(group)
+        for builder in (
+            self._build_weather_block, self._build_price_block, self._build_tapo_block
+        ):
+            page = QtWidgets.QWidget(group)
+            page_layout = QtWidgets.QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 0, 0, 0)
+            page_layout.addWidget(builder(page))
+            page_layout.addStretch(1)
+            self._account_pages.addWidget(page)
+        layout.addWidget(self._account_pages, 1)
+        navigation = QtWidgets.QHBoxLayout()
+        self._back_button = QtWidgets.QPushButton("Back", group)
+        self._back_button.clicked.connect(lambda: self._show_step(
+            self._account_pages.currentIndex() - 1
+        ))
+        self._next_button = QtWidgets.QPushButton("Continue", group)
+        self._next_button.clicked.connect(self._continue_setup)
+        navigation.addWidget(self._back_button)
+        navigation.addStretch(1)
+        navigation.addWidget(self._next_button)
+        layout.addLayout(navigation)
+        self._setup_later = QtWidgets.QPushButton("Set up later", group)
+        self._setup_later.setFlat(True)
+        self._setup_later.clicked.connect(self._finish_setup)
+        layout.addWidget(self._setup_later)
+        self._advanced_toggle = QtWidgets.QCheckBox("Advanced settings", group)
+        layout.addWidget(self._advanced_toggle)
+        advanced = QtWidgets.QWidget(group)
+        layout.addWidget(advanced)
+        self._advanced_toggle.toggled.connect(advanced.setVisible)
+        advanced.hide()
+        layout = QtWidgets.QVBoxLayout(advanced)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # The folder is chosen for the user; the editor stays hidden unless
         # someone ticks the custom-folder toggle.
@@ -266,19 +318,57 @@ class MainWindow(QtWidgets.QMainWindow):
         self._config_dir_label.hide()  # kept for the label-buddy assertion
         self._folder_row.hide()
 
-        intro = QtWidgets.QLabel(_SETUP_INTRO_TEXT, group)
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-
-        layout.addWidget(self._build_weather_block(group))
-        layout.addWidget(self._build_price_block(group))
-        layout.addWidget(self._build_tapo_block(group))
+        self._show_step(0)
         return group
+
+    def _show_step(self, index: int) -> None:
+        self._account_pages.setCurrentIndex(index)
+        names = ("Weather forecast", "Electricity prices", "Your smart plug")
+        self._step_label.setText(f"Step {index + 1} of 3 · {names[index]}")
+        self._back_button.setEnabled(index > 0)
+        self._next_button.setText("Finish setup" if index == 2 else "Continue")
+        fields = (self._weather_key_edit, self._price_key_edit, self._tapo_email)
+        fields[index].setFocus()
+
+    def _continue_setup(self) -> None:
+        index = self._account_pages.currentIndex()
+        fields = (
+            (self._weather_key_edit,),
+            (self._price_key_edit,),
+            (self._tapo_email, self._tapo_password, self._tapo_ip),
+        )
+        # Save edits before leaving; a failed save keeps its inline error visible.
+        if any(field.text() for field in fields[index]):
+            (self._on_save_weather, self._on_save_price, self._on_save_tapo)[index]()
+            if any(field.text() for field in fields[index]):
+                return
+        status = self._current_setup_status()
+        ready = (status.weather_key_saved, status.price_key_saved, status.tapo_saved)
+        if not ready[index]:
+            (self._weather_status, self._price_status, self._tapo_status)[index].setText(
+                "Add your details to continue, or choose Set up later."
+            )
+            return
+        self.save_settings()
+        if index == 2:
+            self._finish_setup()
+        else:
+            self._show_step(index + 1)
+
+    def _finish_setup(self) -> None:
+        self._refresh_setup_status()
+        self.save_settings()
+        self._pages.setCurrentIndex(1)
+        self._run_button.setFocus()
+
+    def _open_setup(self) -> None:
+        self._pages.setCurrentIndex(0)
+        self._show_step(0)
 
     def _build_weather_block(
         self, parent: QtWidgets.QWidget
     ) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox("Weather forecast — free OpenWeatherMap key", parent)
+        box = QtWidgets.QGroupBox("Connect OpenWeatherMap", parent)
         grid = QtWidgets.QGridLayout(box)
 
         self._weather_help_text = _WEATHER_HELP_TEXT
@@ -292,6 +382,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._weather_key_edit.setToolTip(
             "Your key is hidden while typing; paste works normally."
         )
+        self._weather_key_edit.setPlaceholderText("Paste your weather key here")
         grid.addWidget(self._weather_key_edit, 1, 0)
 
         self._weather_save = QtWidgets.QPushButton("Save weather key", box)
@@ -305,7 +396,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return box
 
     def _build_price_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox("Electricity prices — free ENTSO-E token", parent)
+        box = QtWidgets.QGroupBox("Connect ENTSO-E", parent)
         grid = QtWidgets.QGridLayout(box)
 
         self._price_help_text = _PRICE_HELP_TEXT
@@ -319,6 +410,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._price_key_edit.setToolTip(
             "Your token is hidden while typing; paste works normally."
         )
+        self._price_key_edit.setPlaceholderText("Paste your electricity price token here")
         grid.addWidget(self._price_key_edit, 1, 0)
 
         self._price_save = QtWidgets.QPushButton("Save price token", box)
@@ -372,7 +464,12 @@ class MainWindow(QtWidgets.QMainWindow):
         help_text: str,
         url: str | None = None,
     ) -> None:
-        label = QtWidgets.QLabel("Need help finding this?", box)
+        descriptions = {
+            _WEATHER_HELP_TEXT: "Add a weather key so Strom can plan for colder hours.",
+            _PRICE_HELP_TEXT: "Add a price token so Strom can find cheaper hours.",
+            _TAPO_HELP_TEXT: "Connect the Tapo plug that your heater uses.",
+        }
+        label = QtWidgets.QLabel(descriptions.get(help_text, ""), box)
         label.setWordWrap(True)
         grid.addWidget(label, row, 0)
         button = QtWidgets.QPushButton("How do I get this?", box)
@@ -382,7 +479,7 @@ class MainWindow(QtWidgets.QMainWindow):
         grid.addWidget(button, row, 1)
 
     def _build_run_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Step 2 · Run a heating cycle", parent)
+        group = QtWidgets.QGroupBox("Your heating", parent)
         layout = QtWidgets.QVBoxLayout(group)
 
         self._checklist_label = QtWidgets.QLabel("", group)
@@ -402,18 +499,23 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._horizon_label.setBuddy(self._horizon)
         form.addRow(self._horizon_label, self._horizon)
-        horizon_help = QtWidgets.QLabel(_HORIZON_HELP_TEXT, group)
-        horizon_help.setWordWrap(True)
-        form.addRow(horizon_help)
 
         self._log_level = QtWidgets.QComboBox(group)
         self._log_level.addItems(_LOG_LEVELS)
         self._log_level_label = QtWidgets.QLabel("Log detail:", group)
         self._log_level_label.setBuddy(self._log_level)
-        form.addRow(self._log_level_label, self._log_level)
+        self._options_toggle = QtWidgets.QCheckBox("More options", group)
+        layout.addWidget(self._options_toggle)
+        options = QtWidgets.QWidget(group)
+        option_form = QtWidgets.QFormLayout(options)
+        option_form.setContentsMargins(0, 0, 0, 0)
+        option_form.addRow(self._log_level_label, self._log_level)
+        layout.addWidget(options)
+        self._options_toggle.toggled.connect(options.setVisible)
+        options.hide()
         self._log_level_help = QtWidgets.QLabel(_LOG_LEVEL_HELP_TEXT, group)
         self._log_level_help.setWordWrap(True)
-        form.addRow(self._log_level_help)
+        option_form.addRow(self._log_level_help)
 
         self._location_note = QtWidgets.QLabel(_LOCATION_NOTE_TEXT, group)
         self._location_note.setWordWrap(True)
@@ -501,6 +603,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._refresh_setup_status()
         self._sync_custom_folder_toggle()
+        status = self._current_setup_status()
+        ready = (status.weather_key_saved, status.price_key_saved, status.tapo_saved)
+        if all(ready):
+            self._pages.setCurrentIndex(1)
+        else:
+            self._show_step(ready.index(False))
 
     def save_settings(self) -> None:
         """Persist non-secret UI preferences; called when a run is accepted."""
@@ -554,12 +662,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if missing:
                 self._checklist_label.setText(
                     "Not ready yet: missing " + ", ".join(missing)
-                    + ". Finish step 1 above, or run anyway and Strom will "
-                    "try."
+                    + ". Choose Manage accounts to finish setup."
                 )
             else:
                 self._checklist_label.setText(
-                    "All set — ready to run a heating cycle."
+                    "All set — account details available. You can run a heating cycle."
                 )
         status = self._current_setup_status()
         for chip, done in (
@@ -732,7 +839,7 @@ class MainWindow(QtWidgets.QMainWindow):
             text += (
                 "\n\nSetup is not finished yet: missing "
                 + ", ".join(missing)
-                + ". Strom will probably fail until step 1 is complete, but "
+                + ". Strom will probably fail until setup is complete, but "
                 "you can run anyway."
             )
         box = QtWidgets.QMessageBox(self)
@@ -768,6 +875,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._status_label.setText(state.value)
 
         active = state in (RunnerState.Starting, RunnerState.Running)
+        if active:
+            self._pages.setCurrentIndex(1)
+        self._edit_setup.setEnabled(not active)
         self._busy.setVisible(active)
         for widget in (
             self._custom_folder_toggle,

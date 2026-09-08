@@ -121,13 +121,18 @@ library requirements.
 
 ### What the GUI does in this version
 
-- Guide a first-time user in plain language: the window is organized as
-  **Step 1 · Connect your accounts** and **Step 2 · Run a heating cycle**,
-  with a "How do I get this?" helper for each account section (including a
-  button that opens the OpenWeatherMap / ENTSO-E sign-up page in your
-  browser). The settings folder is chosen automatically
-  (`~/.config/strom`); a "Use a custom settings folder" toggle reveals the
-  picker for anyone migrating an existing CLI setup.
+- Guide first-time users through three setup screens: **Weather forecast**,
+  **Electricity prices**, and **Your smart plug**. Continue saves the current
+  details; errors stay on the same screen. Back lets you revisit earlier steps,
+  and Set up later opens the heating screen without starting anything.
+  Each account has a "How do I get this?" helper. Returning users resume at
+  the first missing account, or go straight to heating when all details are
+  available. **Manage accounts** reopens setup.
+- Keep the heating screen focused on planning and running one cycle. Log
+  preferences live under **More options**, and the live log is hidden until
+  **Show technical details** is selected. The settings folder defaults to
+  `~/.config/strom`; **Advanced settings** in setup reveals the custom-folder
+  controls for existing CLI users.
 - Paste-and-save setup: the weather key, the electricity price token, and
   the Tapo account (email, password, plug IP) can be typed directly into
   the window. Saving writes the exact files the CLI reads

@@ -773,7 +773,7 @@ def test_malformed_settings_fall_back_to_defaults(settings, make_window):
     assert window._horizon.value() == 24
     assert window._log_level.currentText() == "INFO"
     assert Path(window._config_dir_edit.text()).name == "strom"  # suggestion used
-    assert (window.width(), window.height()) == (860, 800)
+    assert (window.width(), window.height()) == (720, 620)
     assert window._status_label.text() == "Idle"
 
 
@@ -794,3 +794,71 @@ def test_settings_roundtrip_across_windows(make_window, tmp_path):
     # Restored geometry is frame-inclusive and clamped to the screen; the
     # offscreen screen is only 800 wide, so allow the clamp.
     assert restored.width() >= 780 and restored.height() == 600
+
+
+# --- guided setup navigation ---
+
+
+def test_wizard_saves_and_moves_one_account_at_a_time(make_window, tmp_path):
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path / "accounts"))
+    window._open_setup()
+    assert window._pages.currentIndex() == 0
+    assert not window._back_button.isEnabled()
+    window._next_button.click()
+    assert window._account_pages.currentIndex() == 0
+    assert "Add your details" in window._weather_status.text()
+    window._weather_key_edit.setText("weather")
+    window._next_button.click()
+    assert window._account_pages.currentIndex() == 1
+    assert window._weather_key_edit.text() == ""
+    window._back_button.click()
+    assert window._account_pages.currentIndex() == 0
+    window._next_button.click()
+    window._price_key_edit.setText("prices")
+    window._next_button.click()
+    assert window._account_pages.currentIndex() == 2
+    assert window._next_button.text() == "Finish setup"
+    window._tapo_email.setText("user@example.com")
+    window._tapo_password.setText("secret")
+    window._tapo_ip.setText("invalid")
+    window._next_button.click()
+    assert window._account_pages.currentIndex() == 2
+    assert window._pages.currentIndex() == 0
+    window._tapo_ip.setText("192.168.1.42")
+    window._next_button.click()
+    assert window._pages.currentIndex() == 1
+    assert window._runner.state is RunnerState.Idle
+    restored = make_window()
+    assert restored._pages.currentIndex() == 1
+    restored._edit_setup.click()
+    assert restored._pages.currentIndex() == 0
+
+
+def test_partial_setup_resumes_and_details_are_opt_in(make_window, tmp_path):
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path / "accounts"))
+    window._weather_key_edit.setText("weather")
+    window._on_save_weather()
+    window.save_settings()
+    restored = make_window()
+    assert restored._account_pages.currentIndex() == 1
+    restored._setup_later.click()
+    assert restored._pages.currentIndex() == 1
+    assert restored._details.isHidden()
+    restored._details_toggle.setChecked(True)
+    assert not restored._details.isHidden()
+    assert restored._runner.state is RunnerState.Idle
+
+
+def test_wizard_keeps_unsaved_replacement_on_save_failure(make_window, tmp_path):
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path / "accounts"))
+    window._open_setup()
+    window._weather_key_edit.setText("original")
+    window._on_save_weather()
+    window._weather_key_edit.setText("invalid\nkey")
+    window._next_button.click()
+    assert window._account_pages.currentIndex() == 0
+    assert window._weather_key_edit.text()
+    assert (tmp_path / "accounts" / "weather_api_key.txt").read_text() == "original\n"
