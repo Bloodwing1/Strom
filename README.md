@@ -121,11 +121,33 @@ library requirements.
 
 ### What the GUI does in this version
 
+- Guide a first-time user in plain language: the window is organized as
+  **Step 1 · Connect your accounts** and **Step 2 · Run a heating cycle**,
+  with a "How do I get this?" helper for each account section (including a
+  button that opens the OpenWeatherMap / ENTSO-E sign-up page in your
+  browser). The settings folder is chosen automatically
+  (`~/.config/strom`); a "Use a custom settings folder" toggle reveals the
+  picker for anyone migrating an existing CLI setup.
+- Paste-and-save setup: the weather key, the electricity price token, and
+  the Tapo account (email, password, plug IP) can be typed directly into
+  the window. Saving writes the exact files the CLI reads
+  (`weather_api_key.txt`, `price_api_key.txt`, `tapologin.env`) into the
+  selected folder — created automatically if needed — with mode 0600 so
+  other users on the machine cannot read them. Values are trimmed of
+  copy-paste whitespace; `tapologin.env` is round-trip verified with
+  python-dotenv's own parser before anything is written, so unusual
+  passwords are stored verbatim or not at all.
+- Show a readiness checklist (weather key / price key / plug account) that
+  updates as you save, and mention what is still missing in the run
+  confirmation if you start a cycle before finishing setup.
 - Select a configuration directory with the same file layout as the CLI
   (`tapologin.env`, `price_api_key.txt`, `weather_api_key.txt`, optional
-  `house_config.json` — see Installation above).
-- Choose the optimization horizon (1–48 hours, default 24) and the log level
-  (INFO, WARNING, or ERROR).
+  `house_config.json` — see Installation above); the folder is created on
+  demand if it does not exist yet.
+- Explain the technical controls: the optimization horizon (1–48 hours,
+  default 24 — how far ahead Strom plans, not how long a run takes), the
+  log detail level (INFO/WARNING/ERROR), and the Barcelona weather /
+  Spanish (ES) price defaults.
 - Run **one** control cycle. A confirmation dialog states that this operates
   the real smart plug and may switch your heater on for one control interval
   (about one hour) before anything happens; Cancel is the default.
@@ -141,9 +163,9 @@ library requirements.
   values from `tapologin.env` and the corresponding key files, exactly as
   with the CLI.
 - The GUI remembers the last used directory, horizon, log level, and window
-  geometry. The initial directory suggestion is the saved path, then
-  `STROM_CONFIG_DIR`, then `./config`. Only non-secret preferences are
-  stored; API keys never enter the GUI's settings.
+  geometry. The initial directory is the saved path, then `STROM_CONFIG_DIR`,
+  then `~/.config/strom`. Only non-secret preferences are stored; API keys
+  never enter the GUI's settings.
 
 ### Long-running behavior and limitations
 
@@ -152,10 +174,11 @@ library requirements.
   is never killed or detached; the run button and form stay disabled until
   the cycle exits. There is deliberately **no Stop/Force-quit** control in
   this version: no silent process termination.
-- Only one cycle runs at a time; duplicate starts are prevented.
-- Not included in this version: credential editing, house-parameter editing,
-  charts, scheduling, tray icon, autostart, device discovery, and manual
-  ON/OFF control.
+- Only one cycle runs at a time; duplicate starts are prevented. The setup
+  fields are disabled while a cycle runs so files cannot change mid-cycle.
+- Not included in this version: house-parameter editing (`house_config.json`
+  must still be created by hand), charts, scheduling, tray icon, autostart,
+  device discovery, and manual ON/OFF control.
 
 ### Linux troubleshooting
 

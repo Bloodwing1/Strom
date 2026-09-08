@@ -1,10 +1,14 @@
-"""Window and settings tests (plan §2, task 5).
+"""Window and settings tests.
 
 Modal dialogs are out of tests' way: the run confirmation is monkeypatched,
 the file dialog is patched at the class level, and QSettings storage is a
-per-test temporary INI file — never the developer's real settings.
+per-test temporary INI file — never the developer's real settings. The
+setup-save tests use temporary directories and never touch real credential
+files; environment overrides are cleared per test so status chips stay
+deterministic.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -13,6 +17,7 @@ import pytest
 pytest.importorskip("PySide6", reason="PySide6 is not installed (GUI extras missing)")
 pytest.importorskip("pytestqt", reason="pytest-qt is not installed (gui-dev extra missing)")
 
+from dotenv import load_dotenv  # noqa: E402
 from PySide6 import QtWidgets  # noqa: E402
 from PySide6.QtCore import QByteArray, QSettings  # noqa: E402
 
@@ -21,6 +26,20 @@ from strom.linux_gui.window import MainWindow  # noqa: E402
 
 FAKE_CHILDREN = Path(__file__).parent / "fake_children"
 LOG_LEVELS = ["INFO", "WARNING", "ERROR"]
+CREDENTIAL_ENV_VARS = (
+    "WEATHER_API_KEY",
+    "PRICE_API_KEY",
+    "EMAIL",
+    "PASSWORD",
+    "DEVICEIP",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_credential_env(monkeypatch):
+    """Status chips must not depend on the developer's exported keys."""
+    for name in CREDENTIAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
@@ -56,7 +75,7 @@ def wait_state(qtbot, window, state: RunnerState) -> None:
     qtbot.waitUntil(lambda: window._runner.state is state, timeout=10000)
 
 
-# --- initial controls (plan §2 items 1-8) ---
+# --- initial controls: plain-language UI ---
 
 
 def test_initial_controls(make_window):
@@ -68,12 +87,30 @@ def test_initial_controls(make_window):
     assert [window._log_level.itemText(i) for i in range(window._log_level.count())] == LOG_LEVELS
     assert window._log_level.currentText() == "INFO"
 
-    help_text = window._help_label.text()
-    for fragment in ("tapologin.env", "weather_api_key.txt", "price_api_key.txt", "house_config.json", "override"):
-        assert fragment in help_text
-    cycle_text = window._cycle_label.text()
-    for fragment in ("one control interval", "one hour", "Keep this window open", "Barcelona"):
-        assert fragment in cycle_text
+    # Plain-language explanations for non-technical users.
+    assert "Nothing runs until" in window._intro_label.text()
+    folder_help = window._folder_help.text()
+    for fragment in (
+        "tapologin.env",
+        "weather_api_key.txt",
+        "price_api_key.txt",
+        "created automatically",
+    ):
+        assert fragment in folder_help
+    assert "24 hours is a good default" in window._horizon.toolTip()
+    log_level_help = window._log_level_help.text()
+    assert "INFO" in log_level_help and "WARNING" in log_level_help
+    assert "ERROR" in log_level_help
+    assert "Barcelona" in window._location_note.text()
+    assert "one hour" in window._cycle_label.text()
+
+    # The folder is chosen for the user; the editor is opt-in.
+    assert window._config_dir_edit.text() == str(Path.home() / ".config" / "strom")
+    assert not window._custom_folder_toggle.isChecked()
+    assert window._folder_row.isHidden()
+    assert window._settings_folder_label.text() == (
+        "Settings folder: " + str(Path.home() / ".config" / "strom")
+    )
 
     assert window._run_button.text() == "Run one cycle"
     assert window._browse_button.text() == "Browse…"
@@ -86,8 +123,7 @@ def test_initial_controls(make_window):
     assert window._log.isReadOnly()
     assert window._log.maximumBlockCount() == 2000
 
-    # Explicit buddies make keyboard focus predictable, including the field
-    # whose value and Browse button share a layout row.
+    # Explicit buddies keep keyboard focus predictable.
     assert window._config_dir_label.buddy() is window._config_dir_edit
     assert window._horizon_label.buddy() is window._horizon
     assert window._log_level_label.buddy() is window._log_level
@@ -95,6 +131,225 @@ def test_initial_controls(make_window):
     assert window._status_label.accessibleName() == "Cycle status"
     assert window._busy.accessibleName() == "Cycle progress"
     assert window._log.accessibleName() == "Cycle log"
+
+
+def test_custom_folder_toggle_reveals_editor_and_resets(make_window, tmp_path):
+    window = make_window()
+    custom_dir = tmp_path / "my-strom-settings"
+
+    window._custom_folder_toggle.setChecked(True)
+    assert not window._folder_row.isHidden()
+    window._config_dir_edit.setText(str(custom_dir))
+    assert custom_dir.name in window._settings_folder_label.text()
+
+    # Unticking means "back to the default folder".
+    window._custom_folder_toggle.setChecked(False)
+    assert window._folder_row.isHidden()
+    assert window._config_dir_edit.text() == str(Path.home() / ".config" / "strom")
+    assert "Not ready yet" in window._checklist_label.text()
+
+
+def test_custom_folder_detected_from_env_and_saved_settings(
+    make_window, monkeypatch, tmp_path, settings
+):
+    env_dir = tmp_path / "envdir"
+    monkeypatch.setenv("STROM_CONFIG_DIR", str(env_dir))
+    window = make_window()
+    assert window._custom_folder_toggle.isChecked()
+    assert not window._folder_row.isHidden()
+
+    settings.setValue("configDir", str(tmp_path / "saved"))
+    window = make_window()
+    assert window._custom_folder_toggle.isChecked()
+
+    settings.setValue("configDir", str(Path.home() / ".config" / "strom"))
+    window = make_window()
+    assert not window._custom_folder_toggle.isChecked()
+
+
+def test_setup_pane_offers_paste_and_save(make_window):
+    window = make_window()
+
+    # Every account section has a paste field, a save button, and help.
+    assert window._weather_key_edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
+    assert window._price_key_edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
+    assert window._tapo_password.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
+    assert window._weather_save.text() == "Save weather key"
+    assert window._price_save.text() == "Save price token"
+    assert window._tapo_save.text() == "Save plug details"
+    assert window._weather_key_edit.accessibleName() == "Weather API key"
+    assert window._price_key_edit.accessibleName() == "Electricity price API token"
+    assert window._tapo_ip.accessibleName() == "Plug IP address"
+
+    # A fresh directory starts as "not set" with a checklist explaining why.
+    assert window._weather_status.text() == "Not set yet"
+    assert window._price_status.text() == "Not set yet"
+    assert window._tapo_status.text() == "Not set yet"
+    assert "Not ready yet" in window._checklist_label.text()
+    assert "weather key" in window._checklist_label.text()
+
+
+def test_help_texts_name_the_services(make_window):
+    window = make_window()
+    assert "OpenWeatherMap" in window._weather_help_text
+    assert "openweathermap.org" in window._weather_help_text
+    assert "ENTSO-E" in window._price_help_text
+    assert "transparency.entsoe.eu" in window._price_help_text
+    assert "Tapo" in window._tapo_help_text
+
+
+# --- setup saves ---
+
+
+def test_save_weather_key_writes_private_file(qtbot, make_window, tmp_path):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    window._config_dir_edit.setText(str(config_dir))
+    window._weather_key_edit.setText("  abc123-key  ")
+
+    window._weather_save.click()
+
+    path = config_dir / "weather_api_key.txt"
+    assert path.read_text() == "abc123-key\n"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert window._weather_status.text() == "Saved ✓"
+    assert window._weather_key_edit.text() == ""  # cleared after save
+    assert "Weather key saved to" in window._log.toPlainText()
+    assert "weather key" not in window._checklist_label.text()
+
+
+def test_save_price_key_writes_private_file(make_window, tmp_path):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    window._config_dir_edit.setText(str(config_dir))
+    window._price_key_edit.setText("token-456")
+
+    window._price_save.click()
+
+    path = config_dir / "price_api_key.txt"
+    assert path.read_text() == "token-456\n"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert window._price_status.text() == "Saved ✓"
+    assert "price token saved to" in window._log.toPlainText()
+
+
+def test_save_tapo_credentials_roundtrip_special_characters(
+    make_window, tmp_path, monkeypatch
+):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    window._config_dir_edit.setText(str(config_dir))
+    password = 'pa ss #wo"rd\\'
+    window._tapo_email.setText("user@example.com")
+    window._tapo_password.setText(password)
+    window._tapo_ip.setText("192.168.1.42")
+
+    window._tapo_save.click()
+
+    path = config_dir / "tapologin.env"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert window._tapo_status.text() == "Saved ✓"
+    # Read the file back the way the CLI does and verify every value.
+    load_dotenv(path, override=True)
+    assert os.environ.pop("EMAIL") == "user@example.com"
+    assert os.environ.pop("PASSWORD") == password
+    assert os.environ.pop("DEVICEIP") == "192.168.1.42"
+    assert "smart plug account" not in window._checklist_label.text()
+
+
+def test_save_tapo_rejects_bad_ip_without_writing(make_window, tmp_path):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    window._config_dir_edit.setText(str(config_dir))
+    window._tapo_email.setText("user@example.com")
+    window._tapo_password.setText("secret")
+    window._tapo_ip.setText("not-an-ip")
+
+    window._tapo_save.click()
+
+    assert not (config_dir / "tapologin.env").exists()
+    assert "IP address" in window._tapo_status.text()
+    assert window._tapo_status.text() != "Saved ✓"
+
+
+def test_save_with_blank_value_shows_guidance(make_window, tmp_path):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    window._config_dir_edit.setText(str(config_dir))
+    window._weather_key_edit.setText("   ")
+
+    window._weather_save.click()
+
+    assert window._weather_status.text() == "The weather key is empty; paste it and try again."
+    assert not (config_dir / "weather_api_key.txt").exists()
+
+
+def test_save_without_folder_shows_guidance(make_window):
+    window = make_window()
+    window._custom_folder_toggle.setChecked(True)
+    window._config_dir_edit.setText("")
+
+    window._weather_save.click()
+
+    assert window._weather_status.text() == "Choose a settings folder first."
+
+
+def test_checklist_turns_ready_after_all_saves(make_window, tmp_path):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    window._config_dir_edit.setText(str(config_dir))
+    window._weather_key_edit.setText("w-key")
+    window._weather_save.click()
+    assert "All set" not in window._checklist_label.text()
+
+    window._price_key_edit.setText("p-token")
+    window._price_save.click()
+    assert "All set" not in window._checklist_label.text()
+
+    window._tapo_email.setText("user@example.com")
+    window._tapo_password.setText("secret")
+    window._tapo_ip.setText("192.168.1.42")
+    window._tapo_save.click()
+
+    assert "All set" in window._checklist_label.text()
+    assert window._weather_status.text() == "Saved ✓"
+    assert window._price_status.text() == "Saved ✓"
+    assert window._tapo_status.text() == "Saved ✓"
+
+
+def test_environment_overrides_count_as_saved(make_window, monkeypatch):
+    monkeypatch.setenv("WEATHER_API_KEY", "env-weather")
+    monkeypatch.setenv("PRICE_API_KEY", "env-price")
+    monkeypatch.setenv("EMAIL", "env@example.com")
+    monkeypatch.setenv("PASSWORD", "env-pass")
+    monkeypatch.setenv("DEVICEIP", "10.0.0.9")
+
+    window = make_window()
+
+    assert window._weather_status.text() == "Saved ✓"
+    assert window._price_status.text() == "Saved ✓"
+    assert window._tapo_status.text() == "Saved ✓"
+    assert "All set" in window._checklist_label.text()
+
+
+def test_secrets_never_reach_settings(make_window, tmp_path, settings):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    window._config_dir_edit.setText(str(config_dir))
+    window._weather_key_edit.setText("secret-weather")
+    window._weather_save.click()
+    window._tapo_email.setText("user@example.com")
+    window._tapo_password.setText("secret-pass")
+    window._tapo_ip.setText("192.168.1.42")
+    window._tapo_save.click()
+
+    stored = {str(settings.value(key)) for key in settings.allKeys()}
+    joined = " ".join(stored)
+    assert "secret-weather" not in joined
+    assert "secret-pass" not in joined
+    assert "user@example.com" not in joined
 
 
 # --- browse dialog ---
@@ -126,7 +381,7 @@ def test_suggestion_precedence_saved_env_default(
     make_window, monkeypatch, tmp_path, settings
 ):
     window = make_window()
-    assert Path(window._config_dir_edit.text()).name == "config"
+    assert Path(window._config_dir_edit.text()).name == "strom"
 
     env_dir = tmp_path / "envdir"
     monkeypatch.setenv("STROM_CONFIG_DIR", str(env_dir))
@@ -142,16 +397,36 @@ def test_suggestion_precedence_saved_env_default(
 # --- run flow ---
 
 
-def test_invalid_directory_blocks_confirmation(qtbot, make_window, tmp_path, monkeypatch):
+def test_missing_directory_is_created_and_run_proceeds(
+    qtbot, make_window, tmp_path, monkeypatch
+):
+    record = []
+    window = make_window(spec_factory=child_factory("slow.py", record))
+    missing_dir = tmp_path / "created-by-run"
+    window._config_dir_edit.setText(str(missing_dir))
+    monkeypatch.setattr(window, "_confirm_run", lambda: True)
+
+    window._run_button.click()
+
+    assert missing_dir.is_dir()  # created automatically
+    assert record == [(missing_dir, 24, "INFO")]
+    # Do not abandon the running child: teardown must not hit the
+    # close-refused dialog while a cycle is still active.
+    wait_state(qtbot, window, RunnerState.Completed)
+
+
+def test_file_path_blocks_confirmation(qtbot, make_window, tmp_path, monkeypatch):
     window = make_window(spec_factory=child_factory(record=[]))
+    blocker = tmp_path / "a-file"
+    blocker.write_text("not a directory")
     confirmed = []
     monkeypatch.setattr(window, "_confirm_run", lambda: confirmed.append(True) or True)
 
-    window._config_dir_edit.setText(str(tmp_path / "missing"))
+    window._config_dir_edit.setText(str(blocker))
     window._run_button.click()
 
     assert confirmed == []  # confirmation must open after the directory check
-    assert "not a directory" in window._status_label.text()
+    assert "not a folder" in window._status_label.text()
     assert window._runner.state is RunnerState.Idle
 
 
@@ -170,8 +445,21 @@ def test_path_resolution_error_blocks_confirmation(make_window, monkeypatch):
     assert confirmed == []
     assert window._runner.state is RunnerState.Idle
     assert window._status_label.text() == (
-        "Could not resolve configuration directory: symlink loop"
+        "Could not create the settings folder: symlink loop"
     )
+
+
+def test_empty_folder_blocks_run(make_window, monkeypatch):
+    window = make_window(spec_factory=child_factory(record=[]))
+    confirmed = []
+    monkeypatch.setattr(window, "_confirm_run", lambda: confirmed.append(True) or True)
+
+    window._config_dir_edit.setText("")
+    window._run_button.click()
+
+    assert confirmed == []
+    assert "settings folder" in window._status_label.text()
+    assert window._runner.state is RunnerState.Idle
 
 
 def test_confirmation_cancel_starts_nothing(qtbot, make_window, tmp_path, monkeypatch):
@@ -187,6 +475,41 @@ def test_confirmation_cancel_starts_nothing(qtbot, make_window, tmp_path, monkey
     assert record == []
     assert window._runner.state is RunnerState.Idle
     assert window._run_button.isEnabled()
+
+
+def test_confirmation_mentions_missing_setup(make_window, tmp_path, monkeypatch):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    window._config_dir_edit.setText(str(config_dir))
+    texts: list[str] = []
+
+    def fake_exec(box):
+        texts.append(box.text())
+
+    def fake_clicked(box):
+        for button in box.buttons():
+            if button.text() == "Run one cycle":
+                return button
+        return None
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "clickedButton", fake_clicked)
+
+    assert window._confirm_run() is True
+    assert "Setup is not finished yet" in texts[0]
+    assert "weather key" in texts[0]
+
+    # After completing setup the warning disappears.
+    (config_dir / "weather_api_key.txt").write_text("w\n")
+    (config_dir / "price_api_key.txt").write_text("p\n")
+    (config_dir / "tapologin.env").write_text(
+        "EMAIL=e@x.com\nPASSWORD=p\nDEVICEIP=192.168.1.5\n"
+    )
+    window._refresh_setup_status()
+
+    assert window._confirm_run() is True
+    assert "Setup is not finished yet" not in texts[1]
 
 
 def test_run_flow_disables_controls_and_recovers(qtbot, make_window, tmp_path, monkeypatch):
@@ -205,8 +528,17 @@ def test_run_flow_disables_controls_and_recovers(qtbot, make_window, tmp_path, m
     assert record == [(config_dir, 7, "WARNING")]
     assert window._runner.state is RunnerState.Starting
     for widget in (
+        window._custom_folder_toggle,
         window._config_dir_edit,
         window._browse_button,
+        window._weather_key_edit,
+        window._weather_save,
+        window._price_key_edit,
+        window._price_save,
+        window._tapo_email,
+        window._tapo_password,
+        window._tapo_ip,
+        window._tapo_save,
         window._horizon,
         window._log_level,
         window._run_button,
@@ -220,8 +552,11 @@ def test_run_flow_disables_controls_and_recovers(qtbot, make_window, tmp_path, m
     wait_state(qtbot, window, RunnerState.Completed)
     assert window._status_label.text() == "Completed"
     for widget in (
+        window._custom_folder_toggle,
         window._config_dir_edit,
         window._browse_button,
+        window._weather_key_edit,
+        window._weather_save,
         window._horizon,
         window._log_level,
         window._run_button,
@@ -313,7 +648,7 @@ def test_clear_log_during_run_and_bounded_memory(qtbot, make_window, monkeypatch
     wait_state(qtbot, window, RunnerState.Completed)
     assert "done" in window._log.toPlainText()
 
-    # Log memory stays bounded (plan §6): 2,500 lines exceed the 2,000 cap.
+    # Log memory stays bounded: 2,500 lines exceed the 2,000 cap.
     window._append_log("line\n" * 2500)
     assert window._log.document().blockCount() <= 2001
 
@@ -347,7 +682,7 @@ def test_run_button_click_while_active_starts_nothing(qtbot, make_window, monkey
     assert window._runner.state is RunnerState.Completed
 
 
-# --- close behavior (plan §4, task 6) ---
+# --- close behavior ---
 
 
 def _run_confirmed(qtbot, make_window, monkeypatch, child="slow.py"):
@@ -437,8 +772,8 @@ def test_malformed_settings_fall_back_to_defaults(settings, make_window):
 
     assert window._horizon.value() == 24
     assert window._log_level.currentText() == "INFO"
-    assert Path(window._config_dir_edit.text()).name == "config"  # suggestion used
-    assert (window.width(), window.height()) == (760, 520)
+    assert Path(window._config_dir_edit.text()).name == "strom"  # suggestion used
+    assert (window.width(), window.height()) == (860, 800)
     assert window._status_label.text() == "Idle"
 
 
@@ -456,5 +791,6 @@ def test_settings_roundtrip_across_windows(make_window, tmp_path):
     assert restored._config_dir_edit.text() == str(config_dir)
     assert restored._horizon.value() == 12
     assert restored._log_level.currentText() == "ERROR"
-    # Restored geometry is frame-inclusive; exact widths can differ offscreen.
+    # Restored geometry is frame-inclusive and clamped to the screen; the
+    # offscreen screen is only 800 wide, so allow the clamp.
     assert restored.width() >= 780 and restored.height() == 600
