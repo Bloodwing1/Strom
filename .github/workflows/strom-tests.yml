@@ -60,7 +60,7 @@ jobs:
           pip install -e ".[dev,gui,gui-dev]"
 
       - name: GUI test suite (offscreen)
-        run: pytest tests/linux_gui
+        run: pytest tests/linux_gui --cov=strom/linux_gui --cov-config=/dev/null --cov-report=term-missing --cov-fail-under=70
 
       - name: Type-check GUI modules (PySide6 installed)
         run: mypy strom/linux_gui
