@@ -18,6 +18,7 @@ beyond "usable directory" is left to the child CLI because
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from collections.abc import Callable
 from pathlib import Path
 
@@ -155,6 +156,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._build_ui()
         self._restore_settings()
+        self._language.currentIndexChanged.connect(self._apply_language)
+        self._apply_language()
 
     # --- UI construction ---
 
@@ -256,6 +259,8 @@ class MainWindow(QtWidgets.QMainWindow):
             page = QtWidgets.QWidget(group)
             page_layout = QtWidgets.QVBoxLayout(page)
             page_layout.setContentsMargins(0, 0, 0, 0)
+            if self._account_pages.count() == 0:
+                page_layout.addWidget(self._build_location_block(page))
             page_layout.addWidget(builder(page))
             page_layout.addStretch(1)
             self._account_pages.addWidget(page)
@@ -324,14 +329,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_step(self, index: int) -> None:
         self._account_pages.setCurrentIndex(index)
         names = ("Weather forecast", "Electricity prices", "Your smart plug")
-        self._step_label.setText(f"Step {index + 1} of 3 · {names[index]}")
+        template = self._translated("Step {step} of 3 · {name}")
+        self._step_label.setText(
+            template.format(step=index + 1, name=self._translated(names[index]))
+        )
         self._back_button.setEnabled(index > 0)
-        self._next_button.setText("Finish setup" if index == 2 else "Continue")
+        self._next_button.setText(self._translated("Finish setup" if index == 2 else "Continue"))
         fields = (self._weather_key_edit, self._price_key_edit, self._tapo_email)
         fields[index].setFocus()
 
     def _continue_setup(self) -> None:
         index = self._account_pages.currentIndex()
+        if not self._valid_location():
+            return
         fields = (
             (self._weather_key_edit,),
             (self._price_key_edit,),
@@ -346,7 +356,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ready = (status.weather_key_saved, status.price_key_saved, status.tapo_saved)
         if not ready[index]:
             (self._weather_status, self._price_status, self._tapo_status)[index].setText(
-                "Add your details to continue, or choose Set up later."
+                self._translated("Add your details to continue, or choose Set up later.")
             )
             return
         self.save_settings()
@@ -356,6 +366,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_step(index + 1)
 
     def _finish_setup(self) -> None:
+        if not self._valid_location():
+            return
         self._refresh_setup_status()
         self.save_settings()
         self._pages.setCurrentIndex(1)
@@ -364,6 +376,128 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_setup(self) -> None:
         self._pages.setCurrentIndex(0)
         self._show_step(0)
+
+    def _build_location_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
+        box = QtWidgets.QGroupBox("Location and language", parent)
+        form = QtWidgets.QFormLayout(box)
+        self._country = QtWidgets.QComboBox(box)
+        self._country.addItem("España / Spain", "ES")
+        self._country.setAccessibleName("Country")
+        form.addRow("Country", self._country)
+        note = QtWidgets.QLabel("More countries are work in progress.", box)
+        note.setWordWrap(True)
+        form.addRow(note)
+        self._city = QtWidgets.QComboBox(box)
+        self._city.setEditable(True)
+        self._city.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self._city.addItems([
+            "Barcelona", "Madrid", "Valencia", "Sevilla", "Zaragoza", "Málaga",
+            "Murcia", "Palma", "Bilbao", "Alicante", "Córdoba", "Valladolid",
+            "Vigo", "Gijón", "A Coruña", "Granada", "Pamplona", "Santander",
+            "Toledo", "Cáceres", "Santiago de Compostela", "Las Palmas de Gran Canaria",
+            "Santa Cruz de Tenerife", "Ceuta", "Melilla",
+        ])
+        self._city.setAccessibleName("City or village in Spain")
+        city_editor = self._city.lineEdit()
+        city_completer = self._city.completer()
+        assert city_editor is not None and city_completer is not None
+        city_editor.setMaxLength(120)
+        city_editor.setPlaceholderText("Choose or type a city or village in Spain")
+        city_completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        form.addRow("City or village", self._city)
+        hint = QtWidgets.QLabel("Choose a suggestion or type your city or village in Spain.", box)
+        hint.setWordWrap(True)
+        form.addRow(hint)
+        self._location_error = QtWidgets.QLabel("", box)
+        self._location_error.setWordWrap(True)
+        form.addRow(self._location_error)
+        self._language = QtWidgets.QComboBox(box)
+        self._language.addItem("English", "en")
+        self._language.addItem("Español", "es")
+        self._language.setAccessibleName("Language")
+        form.addRow("Language", self._language)
+        self._city.currentTextChanged.connect(self._update_location_note)
+        return box
+
+    def _valid_location(self) -> bool:
+        city = self._city.currentText().strip()
+        valid = bool(city) and not any(c in city for c in ",;\n\r")
+        self._location_error.setText("" if valid else self._translated(
+            "Enter a city or village in Spain without a country suffix."
+        ))
+        return valid
+
+    def _update_location_note(self) -> None:
+        if hasattr(self, "_location_note"):
+            city = self._city.currentText().strip()
+            template = self._translated("Using {city} weather and Spanish (ES) electricity prices.")
+            self._location_note.setText(template.format(city=city))
+
+    def _translated(self, text: str) -> str:
+        from strom.linux_gui.translations import SPANISH
+        if self._language.currentData() != "es":
+            return text
+        help_texts = {
+            _WEATHER_HELP_TEXT: (
+                "<p>Strom usa OpenWeatherMap para la previsión del tiempo.</p>"
+                "<ol><li>Abre https://openweathermap.org/api y crea una cuenta gratuita.</li>"
+                "<li>Abre API keys en tu cuenta.</li>"
+                "<li>Copia la clave, pégala aquí y pulsa Guardar clave del tiempo.</li></ol>"
+            ),
+            _PRICE_HELP_TEXT: (
+                "<p>Strom usa ENTSO-E Transparency Platform para los precios.</p>"
+                "<ol><li>Crea una cuenta gratuita en https://transparency.entsoe.eu.</li>"
+                "<li>Solicita un token de Web API siguiendo las instrucciones del servicio; "
+                "lo recibirás por correo.</li><li>Pégalo aquí y pulsa Guardar token "
+                "de precios.</li></ol>"
+            ),
+            _TAPO_HELP_TEXT: (
+                "Introduce el correo y la contraseña que usas en la aplicación Tapo "
+                "para el enchufe de tu calefactor. Para ver la dirección IP, abre el "
+                "enchufe en Tapo y busca la información del dispositivo en sus ajustes."
+            ),
+            _HORIZON_HELP_TEXT: (
+                "Cuántas horas planifica Strom por adelantado. Esto no alarga la "
+                "ejecución. Se recomiendan 24 horas."
+            ),
+            _LOG_LEVEL_HELP_TEXT: (
+                "Detalle del registro: INFO muestra el progreso normal; WARNING "
+                "solo advertencias y errores; ERROR solo errores."
+            ),
+            _FOLDER_HELP_TEXT: (
+                "Las claves y los datos del enchufe se guardan en weather_api_key.txt, "
+                "price_api_key.txt y tapologin.env dentro de la carpeta indicada. "
+                "La carpeta se crea automáticamente. Si ya usas Strom, activa la "
+                "carpeta personalizada y elige la que contiene tus claves."
+            ),
+        }
+        return help_texts.get(text, SPANISH.get(text, text))
+
+    def _apply_language(self) -> None:
+        # Keep the original text so switching languages is reversible.
+        for widget in self.findChildren(QtWidgets.QWidget):
+            if isinstance(widget, QtWidgets.QGroupBox):
+                source = widget.property("sourceTitle") or widget.title()
+                widget.setProperty("sourceTitle", source)
+                widget.setTitle(self._translated(source))
+            elif isinstance(widget, (QtWidgets.QLabel, QtWidgets.QAbstractButton)):
+                if widget in (self._step_label, self._next_button, self._location_note,
+                              self._checklist_label, self._settings_folder_label,
+                              self._weather_status, self._price_status, self._tapo_status,
+                              self._location_error, self._status_label):
+                    continue
+                source = widget.property("sourceText") or widget.text()
+                widget.setProperty("sourceText", source)
+                widget.setText(self._translated(source))
+            elif isinstance(widget, QtWidgets.QLineEdit):
+                source = widget.property("sourcePlaceholder") or widget.placeholderText()
+                widget.setProperty("sourcePlaceholder", source)
+                widget.setPlaceholderText(self._translated(source))
+        self._horizon.setToolTip(self._translated(_HORIZON_HELP_TEXT))
+        self._show_step(self._account_pages.currentIndex())
+        self._refresh_setup_status()
+        self._status_label.setText(self._translated(self._runner.state.value))
+        self._update_location_note()
 
     def _build_weather_block(
         self, parent: QtWidgets.QWidget
@@ -532,6 +666,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_tab_order(self) -> None:
         order = (
+            self._country,
+            self._city,
+            self._language,
             self._custom_folder_toggle,
             self._config_dir_edit,
             self._browse_button,
@@ -576,6 +713,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._config_dir_edit.setText(self._default_dir())
 
     def _restore_settings(self) -> None:
+        city = self._settings.value("city", "Barcelona")
+        if isinstance(city, str) and city.strip() and not any(c in city for c in ",;\n\r"):
+            self._city.setCurrentText(city.strip())
+        language = self._settings.value("language", "en")
+        self._language.setCurrentIndex(1 if language == "es" else 0)
         saved_dir = self._settings.value("configDir")
         if isinstance(saved_dir, str) and saved_dir.strip():
             self._config_dir_edit.setText(saved_dir.strip())
@@ -615,6 +757,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("configDir", self._config_dir_edit.text().strip())
         self._settings.setValue("horizonHours", self._horizon.value())
         self._settings.setValue("logLevel", self._log_level.currentText())
+        if self._valid_location():
+            self._settings.setValue("city", self._city.currentText().strip())
+        self._settings.setValue("country", "ES")
+        self._settings.setValue("language", self._language.currentData())
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.sync()
 
@@ -656,17 +802,21 @@ class MainWindow(QtWidgets.QMainWindow):
             "Settings folder: " + (raw if raw else "(none chosen)")
         )
         if not raw:
-            self._checklist_label.setText("Choose a settings folder to begin.")
+            self._checklist_label.setText(self._translated("Choose a settings folder to begin."))
         else:
             missing = self._missing_setup_items()
             if missing:
                 self._checklist_label.setText(
-                    "Not ready yet: missing " + ", ".join(missing)
-                    + ". Choose Manage accounts to finish setup."
+                    self._translated(
+                        "Not ready yet: missing {items}. Choose Manage accounts to finish setup."
+                    ).format(
+                        items=", ".join(self._translated(item) for item in missing))
                 )
             else:
                 self._checklist_label.setText(
-                    "All set — account details available. You can run a heating cycle."
+                    self._translated(
+                        "All set — account details available. You can run a heating cycle."
+                    )
                 )
         status = self._current_setup_status()
         for chip, done in (
@@ -674,7 +824,7 @@ class MainWindow(QtWidgets.QMainWindow):
             (self._price_status, status.price_key_saved),
             (self._tapo_status, status.tapo_saved),
         ):
-            chip.setText("Saved ✓" if done else "Not set yet")
+            chip.setText(self._translated("Saved ✓" if done else "Not set yet"))
 
     def _prepared_dir_for_save(self, chip: QtWidgets.QLabel) -> Path | None:
         raw = self._config_dir_edit.text().strip()
@@ -710,7 +860,7 @@ class MainWindow(QtWidgets.QMainWindow):
             chip.setText(f"Could not save the weather key: {exc}")
             return
         self._weather_key_edit.clear()
-        chip.setText("Saved ✓")
+        chip.setText(self._translated("Saved ✓"))
         self._append_log(f"Weather key saved to {path}")
         self._refresh_setup_status()
 
@@ -731,7 +881,7 @@ class MainWindow(QtWidgets.QMainWindow):
             chip.setText(f"Could not save the price token: {exc}")
             return
         self._price_key_edit.clear()
-        chip.setText("Saved ✓")
+        chip.setText(self._translated("Saved ✓"))
         self._append_log(f"Electricity price token saved to {path}")
         self._refresh_setup_status()
 
@@ -756,19 +906,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tapo_email.clear()
         self._tapo_password.clear()
         self._tapo_ip.clear()
-        chip.setText("Saved ✓")
+        chip.setText(self._translated("Saved ✓"))
         self._append_log(f"Plug account saved to {path}")
         self._refresh_setup_status()
 
     def _show_help(self, text: str, url: str | None = None) -> None:
         """Static guidance with an optional button for the sign-up page."""
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Setup help")
+        box.setWindowTitle(self._translated("Setup help"))
         box.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        box.setText(text)
+        box.setText(self._translated(text))
         if url:
             open_button = box.addButton(
-                "Open the sign-up page", QtWidgets.QMessageBox.ButtonRole.ActionRole
+                self._translated("Open the sign-up page"),
+                QtWidgets.QMessageBox.ButtonRole.ActionRole
             )
             open_button.clicked.connect(
                 lambda checked=False: QDesktopServices.openUrl(QUrl(url))
@@ -792,6 +943,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._config_dir_edit.setText(chosen)
 
     def _on_run_clicked(self) -> None:
+        if not self._valid_location():
+            self._open_setup()
+            return
         raw = self._config_dir_edit.text().strip()
         if not raw:
             self._status_label.setText("Choose a settings folder first.")
@@ -827,13 +981,17 @@ class MainWindow(QtWidgets.QMainWindow):
         spec = self._spec_factory(
             config_dir, self._horizon.value(), self._log_level.currentText()
         )
+        if self._spec_factory is make_launch_spec:
+            spec = replace(spec, arguments=spec.arguments + (
+                "--city", self._city.currentText().strip() + ", ES",
+            ))
         if self._runner.start(spec):
             # Persist the accepted, non-secret form values.
             self.save_settings()
 
     def _confirm_run(self) -> bool:
         """Product confirmation for physical actuation; Cancel is the default."""
-        text = _CONFIRM_TEXT
+        text = self._translated(_CONFIRM_TEXT)
         missing = self._missing_setup_items()
         if missing:
             text += (
@@ -843,13 +1001,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 "you can run anyway."
             )
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Run one cycle")
-        box.setText(text)
+        box.setWindowTitle(self._translated("Run one cycle"))
+        box.setText(self._translated(text))
         run_button = box.addButton(
-            "Run one cycle", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+            self._translated("Run one cycle"), QtWidgets.QMessageBox.ButtonRole.AcceptRole
         )
         cancel_button = box.addButton(
-            "Cancel", QtWidgets.QMessageBox.ButtonRole.RejectRole
+            self._translated("Cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole
         )
         box.setDefaultButton(cancel_button)
         box.exec()
@@ -858,7 +1016,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _explain_refused_close(self) -> None:
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle("Cycle in progress")
-        box.setText(_CLOSE_REFUSED_TEXT)
+        box.setText(self._translated(_CLOSE_REFUSED_TEXT))
         ok_button = box.addButton(
             "OK", QtWidgets.QMessageBox.ButtonRole.AcceptRole
         )
@@ -872,7 +1030,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if detail is not None and state in (RunnerState.Failed, RunnerState.FailedToStart):
             self._status_label.setText(f"{state.value}: {detail}")
         else:
-            self._status_label.setText(state.value)
+            self._status_label.setText(self._translated(state.value))
 
         active = state in (RunnerState.Starting, RunnerState.Running)
         if active:
@@ -880,6 +1038,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._edit_setup.setEnabled(not active)
         self._busy.setVisible(active)
         for widget in (
+            self._country,
+            self._city,
+            self._language,
             self._custom_folder_toggle,
             self._config_dir_edit,
             self._browse_button,

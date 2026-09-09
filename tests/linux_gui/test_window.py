@@ -862,3 +862,41 @@ def test_wizard_keeps_unsaved_replacement_on_save_failure(make_window, tmp_path)
     assert window._account_pages.currentIndex() == 0
     assert window._weather_key_edit.text()
     assert (tmp_path / "accounts" / "weather_api_key.txt").read_text() == "original\n"
+
+
+def test_location_and_language_first_step(make_window, settings):
+    window = make_window()
+    assert window._account_pages.currentIndex() == 0
+    assert window._account_pages.currentWidget().isAncestorOf(window._city)
+    assert window._country.count() == 1
+    assert window._country.currentData() == "ES"
+    window._city.setCurrentText("Albarracín")
+    window._language.setCurrentIndex(1)
+    assert window._next_button.text() == "Continuar"
+    assert "Albarracín" in window._location_note.text()
+    window.save_settings()
+    restored = make_window()
+    assert restored._city.currentText() == "Albarracín"
+    assert restored._language.currentData() == "es"
+    restored._language.setCurrentIndex(0)
+    assert restored._next_button.text() == "Continue"
+
+
+def test_invalid_location_stays_in_setup(make_window):
+    window = make_window()
+    for city in ("", "  ", "Paris, FR"):
+        window._city.setCurrentText(city)
+        window._finish_setup()
+        assert window._pages.currentIndex() == 0
+        assert window._location_error.text()
+
+
+def test_selected_location_passed_to_production_child(make_window, monkeypatch, tmp_path):
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path))
+    window._city.setCurrentText("Albarracín")
+    monkeypatch.setattr(window, "_confirm_run", lambda: True)
+    specs = []
+    monkeypatch.setattr(window._runner, "start", lambda spec: specs.append(spec) or True)
+    window._on_run_clicked()
+    assert specs[0].arguments[-2:] == ("--city", "Albarracín, ES")

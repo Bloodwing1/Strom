@@ -128,6 +128,11 @@ library requirements.
   Each account has a "How do I get this?" helper. Returning users resume at
   the first missing account, or go straight to heating when all details are
   available. **Manage accounts** reopens setup.
+- Choose English or Spanish and a city or village on the first setup screen.
+  Spain is the only available country; more countries are work in progress.
+  Choose a suggested city or type a place name, which OpenWeatherMap resolves
+  when a cycle runs. The GUI passes the selected place with the ES country code
+  to the CLI through `--city`; electricity prices remain Spanish.
 - Keep the heating screen focused on planning and running one cycle. Log
   preferences live under **More options**, and the live log is hidden until
   **Show technical details** is selected. The settings folder defaults to
@@ -151,8 +156,8 @@ library requirements.
   demand if it does not exist yet.
 - Explain the technical controls: the optimization horizon (1–48 hours,
   default 24 — how far ahead Strom plans, not how long a run takes), the
-  log detail level (INFO/WARNING/ERROR), and the Barcelona weather /
-  Spanish (ES) price defaults.
+  log detail level (INFO/WARNING/ERROR), and the selected weather location /
+  Spanish (ES) prices.
 - Run **one** control cycle. A confirmation dialog states that this operates
   the real smart plug and may switch your heater on for one control interval
   (about one hour) before anything happens; Cancel is the default.
@@ -167,8 +172,8 @@ library requirements.
   `PASSWORD`, `DEVICEIP`, `WEATHER_API_KEY`, and `PRICE_API_KEY`) override
   values from `tapologin.env` and the corresponding key files, exactly as
   with the CLI.
-- The GUI remembers the last used directory, horizon, log level, and window
-  geometry. The initial directory is the saved path, then `STROM_CONFIG_DIR`,
+- The GUI remembers the last used directory, city, language, horizon, log level,
+  and window geometry. The initial directory is the saved path, then `STROM_CONFIG_DIR`,
   then `~/.config/strom`. Only non-secret preferences are stored; API keys
   never enter the GUI's settings.
 
