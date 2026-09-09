@@ -451,6 +451,17 @@ Verification of the exact artifact:
   system `libdbus-1.so.3`; it joins libX11/libglib/etc. as documented
   display/session prerequisites and is present on every desktop system.
 
+Follow-up, found by the first CI run on the PR (reproduced locally with the
+same interpreter before fixing): whether stdlib extensions are shared
+libraries or built into the interpreter depends on the CPython build. The
+build host's Python compiles them in, which hid that the bundle filter
+dropped the interpreter's `lib-dynload` extensions; on CI's Python
+(`actions/setup-python` 3.12.8) the frozen bootstrap failed with
+"No module named 'binascii'" (`zipfile -> binascii`). The spec filter now
+also keeps the build interpreter's stdlib tree; re-verified end to end with
+both interpreters (staged AppRun, FUSE, extraction, Ubuntu 22.04 container,
+ELF baseline within limits).
+
 Not yet verified (recorded honestly):
 
 - A Wayland session: automation covers offscreen Qt and X11/Xvfb only.

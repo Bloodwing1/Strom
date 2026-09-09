@@ -64,25 +64,44 @@ a = Analysis(
     noarchive=False,
 )
 
-# Keep only binaries that ship inside Python wheels (site-packages) plus
-# libpython itself. PyInstaller otherwise copies the build host's system
+# Keep only binaries that ship inside Python wheels (site-packages), the
+# build interpreter's own stdlib tree (its lib-dynload binary extensions),
+# and libpython itself. PyInstaller otherwise copies the build host's system
 # libraries (X11, GTK/glib, OpenSSL, libstdc++, ...) into the bundle, which
 # would silently raise the requirement to the build host's glibc (the ELF
 # audit in build.sh exists to catch exactly this). GUI system libraries are
 # instead resolved at runtime by the target distribution, which is how
 # manylinux wheels are designed to work and what preserves the Ubuntu 22.04
-# baseline. Verified by the post-build ELF audit and the staged AppRun
-# self-test.
+# baseline.
+#
+# The stdlib part matters more than it looks: whether stdlib extensions are
+# shared libraries (lib-dynload) or built into the interpreter depends on
+# the CPython build. The build host's Python compiled them in, which hid the
+# gap locally; the actions/setup-python Python used in CI ships them as .so
+# files, and without this rule the frozen bootstrap failed at startup with
+# "No module named 'binascii'" (zipfile -> binascii) — found by the PR CI
+# run and reproduced locally with the same interpreter.
+import sys as _sys
+import sysconfig as _sysconfig
 import site as _site
 
-_SITE_PATHS = tuple(
-    os.path.realpath(p) for p in _site.getsitepackages()
+_SITE_PATHS = tuple(os.path.realpath(p) for p in _site.getsitepackages())
+_PY_LIB_DIR = "python{}.{}".format(*_sys.version_info[:2])
+_PYTHON_DIRS = tuple(
+    os.path.realpath(candidate)
+    for candidate in (
+        os.path.join(_sys.base_prefix, "lib", _PY_LIB_DIR),
+        os.path.join(_sys.prefix, "lib", _PY_LIB_DIR),
+        _sysconfig.get_path("stdlib"),
+        _sysconfig.get_path("platstdlib"),
+    )
+    if candidate
 )
 
 
 def _wheel_or_python_binary(entry) -> bool:
     source = os.path.realpath(entry[1])
-    if source.startswith(_SITE_PATHS):
+    if source.startswith(_SITE_PATHS + _PYTHON_DIRS):
         return True
     return entry[0].startswith("libpython3.")
 
