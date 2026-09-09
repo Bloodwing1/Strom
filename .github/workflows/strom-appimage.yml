@@ -58,10 +58,13 @@ jobs:
       # desktop-file-utils validates the AppDir entry; libfuse2 enables the
       # real FUSE-mount launch check; podman runs the Ubuntu 22.04 container
       # verification (preinstalled on runner images, installed if absent).
+      # libegl1/libgl1: the bundled libQt6Gui links them even for offscreen
+      # Qt (same prerequisite the GUI test job documents); runner images do
+      # not ship libEGL.
       - name: Install build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y desktop-file-utils libfuse2
+          sudo apt-get install --no-install-recommends -y desktop-file-utils libfuse2 libegl1 libgl1
           command -v podman >/dev/null || \
             sudo apt-get install --no-install-recommends -y podman
 
