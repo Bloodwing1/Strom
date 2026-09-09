@@ -138,9 +138,115 @@ SPANISH = {
         'termine. No se puede cancelar de forma segura desde aquí; los controles '
         'permanecerán desactivados hasta que termine.'
     ),
+    'A newer version of Strom ({available}) is available. (you are running {current})': (
+        'Hay una versión más nueva de Strom ({available}) disponible. '
+        '(estás usando {current})'
+    ),
+    '(you are running {current})': '(estás usando {current})',
 }
 
 SPANISH.update({
     "Setup help": "Ayuda de configuración",
     "Open the sign-up page": "Abrir la página de registro",
+    "Help": "Ayuda",
+    "Check for updates": "Buscar actualizaciones",
+    "Current version:": "Versión actual:",
+    "Available version:": "Versión disponible:",
+    "Newer version available": "Versión más nueva disponible",
+    "Details…": "Detalles…",
+    "Update and restart": "Actualizar y reiniciar",
+    "Open release page": "Abrir la página de versiones",
+    "Close": "Cerrar",
+    "Update status": "Estado de la actualización",
+    "Update download progress": "Progreso de la descarga de la actualización",
+    "A newer version of Strom ({available}) is available.": (
+        "Hay una versión más nueva de Strom ({available}) disponible."
+    ),
+    "You are already on the newest available Strom version.": (
+        "Ya tienes la versión de Strom más nueva disponible."
+    ),
+    "An update check is already running.": "Ya se está buscando una actualización.",
+    "An update is already running.": "Ya hay una actualización en marcha.",
+    "Checking for updates…": "Buscando actualizaciones…",
+    "Downloading the update…": "Descargando la actualización…",
+    "Preparing the update…": "Preparando la actualización…",
+    "Verifying the downloaded update (offline self-test)…": (
+        "Verificando la actualización descargada (autoprueba sin conexión)…"
+    ),
+    "Replacing the AppImage…": "Reemplazando el AppImage…",
+    "Starting the updated Strom…": "Iniciando el Strom actualizado…",
+    "The updated Strom is running; this window can now be closed.": (
+        "El Strom actualizado está en marcha; ya puedes cerrar esta ventana."
+    ),
+    "Update download cancelled.": "Descarga de la actualización cancelada.",
+    "Strom was updated": "Strom se ha actualizado",
+    (
+        "Installation is unavailable while a cycle runs; try again after it "
+        "finishes."
+    ): (
+        "La instalación no está disponible mientras hay un ciclo en marcha; "
+        "inténtalo de nuevo cuando termine."
+    ),
+    (
+        "An update is being installed; starting a heating cycle is blocked "
+        "until it finishes or is rolled back."
+    ): (
+        "Se está instalando una actualización; no se puede iniciar un ciclo "
+        "de calefacción hasta que termine o se revierta."
+    ),
+    (
+        "An update is being installed; the window must stay open until it "
+        "finishes."
+    ): (
+        "Se está instalando una actualización; la ventana debe permanecer "
+        "abierta hasta que termine."
+    ),
+    "Update in progress": "Actualización en curso",
+    (
+        "Strom {available} is available; you are running {current}."
+    ): (
+        "Strom {available} está disponible; estás usando {current}."
+    ),
+    (
+        "The release list was too long to check completely; newer releases "
+        "may exist."
+    ): (
+        "La lista de versiones es demasiado larga para comprobarla por "
+        "completo; puede haber versiones más nuevas."
+    ),
+    (
+        "The release list was too long to check completely, so this cannot "
+        "prove the app is current."
+    ): (
+        "La lista de versiones es demasiado larga para comprobarla por "
+        "completo, así que esto no demuestra que la aplicación esté al día."
+    ),
+    (
+        "A newer release ({newest}) was found, but it has no installable "
+        "AppImage asset for this architecture."
+    ): (
+        "Se encontró una versión más nueva ({newest}), pero no tiene un "
+        "AppImage instalable para esta arquitectura."
+    ),
+    "Checking for updates failed: {reason}": (
+        "La búsqueda de actualizaciones falló: {reason}"
+    ),
+    "Download failed: {reason}": "La descarga falló: {reason}",
+    "The update was not installed. {detail}": (
+        "La actualización no se instaló. {detail}"
+    ),
+    (
+        "The updated Strom could not be started; your previous version was "
+        "restored. {detail}"
+    ): (
+        "El Strom actualizado no se pudo iniciar; se restauró tu versión "
+        "anterior. {detail}"
+    ),
+    (
+        "The update could not be restored automatically; your previous "
+        "version is preserved at: {backup}"
+    ): (
+        "La actualización no se pudo restaurar automáticamente; tu versión "
+        "anterior se conserva en: {backup}"
+    ),
 })

@@ -44,6 +44,14 @@ from strom.linux_gui.setup_files import (
     save_api_key,
     save_tapo_credentials,
 )
+from strom.linux_gui.update_service import (
+    ACK_ENV,
+    UpdateCoordinator,
+    UpdateService,
+    UpdateState,
+    UpdaterHooks,
+)
+from strom.linux_gui.app_identity import install_status
 
 _LOG_LEVELS = ("INFO", "WARNING", "ERROR")
 _DEFAULT_HORIZON = 24
@@ -52,6 +60,11 @@ _MAX_HORIZON = 48
 _INITIAL_SIZE = (720, 620)
 _LOG_MAX_BLOCKS = 2000
 _LOG_MIN_HEIGHT = 120
+
+_RUN_BLOCKED_TEXT = (
+    "An update is being installed; starting a heating cycle is blocked "
+    "until it finishes or is rolled back."
+)
 
 _INTRO_TEXT = (
     "Plan your heating around lower electricity prices. "
@@ -144,6 +157,7 @@ class MainWindow(QtWidgets.QMainWindow):
         parent: QtWidgets.QWidget | None = None,
         settings: QtCore.QSettings | None = None,
         spec_factory: SpecFactory | None = None,
+        auto_update_check: bool = False,
     ) -> None:
         super().__init__(parent)
         self._settings = settings if settings is not None else QtCore.QSettings()
@@ -154,6 +168,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self._runner = CycleRunner(self)
         self._runner.stateChanged.connect(self._on_runner_state)
         self._runner.outputText.connect(self._append_log)
+
+        self._update_status = install_status()
+        self._update_service = UpdateService(
+            current=self._update_status.version,
+            arch=(
+                self._update_status.identity.arch
+                if self._update_status.identity is not None
+                else None
+            ),
+        )
+        self._updater = UpdateCoordinator(
+            self,
+            self._update_service,
+            hooks=UpdaterHooks(
+                is_cycle_active=self._runner.is_active,
+                set_run_block=self._set_update_run_block,
+                save_preferences=self.save_settings,
+                request_close=lambda: self._request_close(),
+            ),
+            status=self._update_status,
+        )
+        self._updater.stateChanged.connect(lambda _state: self._refresh_controls())
+        self._updater.updateNotice.connect(self._show_update_notice)
+        self._run_blocked_by_update = False
+        self._update_dialog = None
+        self._build_ui()
+        self._restore_settings()
+        self._language.currentIndexChanged.connect(self._apply_language)
+        self._apply_language()
+        self._read_update_handshake()
+        if auto_update_check:
+            self._updater.run_startup_checks()
 
         self._build_ui()
         self._restore_settings()
@@ -243,7 +289,111 @@ class MainWindow(QtWidgets.QMainWindow):
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
         scroll.setWidget(content)
         self.setCentralWidget(scroll)
+
+        # The update actions live in a compact application menu, available
+        # from both the setup and the heating views (update plan §6).
+        menu_bar = self.menuBar()
+        self._help_menu = menu_bar.addMenu("Help")
+        self._check_updates_action = self._help_menu.addAction("Check for updates")
+        self._check_updates_action.triggered.connect(self._show_update_dialog)
+
+        # A non-modal notice when the automatic check finds a newer version:
+        # it never steals focus and never blocks setup.
+        self._update_notice = QtWidgets.QWidget(content)
+        notice_layout = QtWidgets.QHBoxLayout(self._update_notice)
+        notice_layout.setContentsMargins(0, 0, 0, 0)
+        self._update_notice_label = QtWidgets.QLabel("", self._update_notice)
+        self._update_notice_label.setWordWrap(True)
+        self._update_notice_label.setAccessibleName("Newer version available")
+        notice_layout.addWidget(self._update_notice_label, stretch=1)
+        self._update_notice_button = QtWidgets.QPushButton("Details…", self._update_notice)
+        self._update_notice_button.clicked.connect(self._show_update_dialog)
+        notice_layout.addWidget(self._update_notice_button)
+        self._update_notice.hide()
+        outer.insertWidget(1, self._update_notice)
+
         self._build_tab_order()
+
+    def _set_update_run_block(self, blocked: bool) -> None:
+        """Window hook called by the coordinator around accepted updates."""
+        self._run_blocked_by_update = blocked
+        self._refresh_controls()
+
+    def _request_close(self) -> None:
+        """Coordinator hook: close this window after a successful restart."""
+        self.close()
+
+    def _read_update_handshake(self) -> None:
+        """Candidate side of the restart handshake (update plan §5, step 7)."""
+        raw = os.environ.get(ACK_ENV)
+        if not raw:
+            return
+        name, _, token = raw.partition(":")
+        if name and token:
+            self._updater.begin_candidate_handshake(name, token)
+
+    def _show_update_dialog(self) -> None:
+        from strom.linux_gui.update_dialog import UpdateDialog
+
+        if self._update_dialog is None:
+            self._update_dialog = UpdateDialog(
+                self._updater, self._translated, self
+            )
+        self._update_dialog.present()
+        self._updater.check(manual=True)
+
+    def _show_update_notice(self, selection) -> None:
+        candidate = selection.candidate if selection is not None else None
+        if candidate is None:
+            return
+        version = self._update_status.version
+        text = self._translated(
+            "A newer version of Strom ({available}) is available."
+        ).format(available=candidate.version)
+        if version is not None:
+            text = (
+                f"{text} "
+                + self._translated("(you are running {current})").format(
+                    current=version
+                )
+            )
+        self._update_notice_label.setText(text)
+        self._update_notice.setVisible(True)
+
+    def _refresh_controls(self) -> None:
+        """One place decides control enablement (update plan §4).
+
+        Runner-state changes and update-state changes both land here, so a
+        runner transition can never re-enable the run button while an
+        accepted update is installing.
+        """
+        cycle_active = self._runner.is_active()
+        update_block = self._updater.run_blocked() or self._run_blocked_by_update
+        allow = not cycle_active and not update_block
+        if cycle_active:
+            self._pages.setCurrentIndex(1)
+        self._edit_setup.setEnabled(allow)
+        self._busy.setVisible(cycle_active)
+        for widget in (
+            self._country,
+            self._city,
+            self._language,
+            self._custom_folder_toggle,
+            self._config_dir_edit,
+            self._browse_button,
+            self._weather_key_edit,
+            self._weather_save,
+            self._price_key_edit,
+            self._price_save,
+            self._tapo_email,
+            self._tapo_password,
+            self._tapo_ip,
+            self._tapo_save,
+            self._horizon,
+            self._log_level,
+            self._run_button,
+        ):
+            widget.setEnabled(allow)
 
     def _build_accounts_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Set up Strom", parent)
@@ -492,7 +642,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if widget in (self._step_label, self._next_button, self._location_note,
                               self._checklist_label, self._settings_folder_label,
                               self._weather_status, self._price_status, self._tapo_status,
-                              self._location_error, self._status_label):
+                              self._location_error, self._status_label,
+                              self._update_notice_label):
                     continue
                 source = widget.property("sourceText") or widget.text()
                 widget.setProperty("sourceText", source)
@@ -502,9 +653,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.setProperty("sourcePlaceholder", source)
                 widget.setPlaceholderText(self._translated(source))
         self._horizon.setToolTip(self._translated(_HORIZON_HELP_TEXT))
+        self._help_menu.setTitle(self._translated("Help"))
+        self._check_updates_action.setText(self._translated("Check for updates"))
         self._show_step(self._account_pages.currentIndex())
         self._refresh_setup_status()
         self._status_label.setText(self._translated(self._runner.state.value))
+        self._update_notice_button.setText(self._translated("Details…"))
+        if self._update_dialog is not None:
+            self._update_dialog.retranslate()
         self._update_location_note()
 
     def _build_weather_block(
@@ -951,6 +1107,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._config_dir_edit.setText(chosen)
 
     def _on_run_clicked(self) -> None:
+        # The guard is enforced here regardless of any widget's enabled
+        # state, so queued clicks cannot start a cycle during an update.
+        if self._updater.run_blocked() or self._run_blocked_by_update:
+            self._status_label.setText(self._translated(_RUN_BLOCKED_TEXT))
+            return
         if not self._valid_location():
             self._open_setup()
             return
@@ -1039,32 +1200,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._status_label.setText(f"{state.value}: {detail}")
         else:
             self._status_label.setText(self._translated(state.value))
-
-        active = state in (RunnerState.Starting, RunnerState.Running)
-        if active:
-            self._pages.setCurrentIndex(1)
-        self._edit_setup.setEnabled(not active)
-        self._busy.setVisible(active)
-        for widget in (
-            self._country,
-            self._city,
-            self._language,
-            self._custom_folder_toggle,
-            self._config_dir_edit,
-            self._browse_button,
-            self._weather_key_edit,
-            self._weather_save,
-            self._price_key_edit,
-            self._price_save,
-            self._tapo_email,
-            self._tapo_password,
-            self._tapo_ip,
-            self._tapo_save,
-            self._horizon,
-            self._log_level,
-            self._run_button,
-        ):
-            widget.setEnabled(not active)
+        self._refresh_controls()
 
     def _append_log(self, text: str) -> None:
         self._log.appendPlainText(text.rstrip("\n"))
@@ -1079,5 +1215,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self._explain_refused_close()
             event.ignore()
             return
-        self.save_settings()
+        reason = self._updater.request_close()
+        if reason:
+            self._explain_update_refusal(reason)
+            event.ignore()
+            return
+        if self._updater.state is not UpdateState.Restarting:
+            self.save_settings()
         event.accept()
+
+    def _explain_update_refusal(self, reason: str) -> None:
+        """Explain why the window must stay open during an installation."""
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle("Update in progress")
+        box.setText(self._translated(reason))
+        ok_button = box.addButton(
+            "OK", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+        )
+        box.setDefaultButton(ok_button)
+        box.exec()

@@ -254,15 +254,91 @@ Do not publish a release merely to validate this implementation.
 
 ## Completion checklist
 
-- [ ] Users can discover an update and install/restart from a writable AppImage.
-- [ ] Source and unsupported installations have an honest manual fallback.
-- [ ] Checks/downloads never freeze the GUI or transmit user configuration.
-- [ ] Installation cannot interrupt or race a heating cycle.
-- [ ] Version/channel selection and checksums are tested.
-- [ ] Atomic replacement, startup acknowledgement, and recovery are tested.
-- [ ] English and Spanish UI plus existing setup behavior are preserved.
-- [ ] Real packaged smoke tests and repository gates pass.
-- [ ] User documentation describes implemented behavior accurately.
+- [x] Users can discover an update and install/restart from a writable AppImage.
+- [x] Source and unsupported installations have an honest manual fallback.
+- [x] Checks/downloads never freeze the GUI or transmit user configuration.
+- [x] Installation cannot interrupt or race a heating cycle.
+- [x] Version/channel selection and checksums are tested.
+- [x] Atomic replacement, startup acknowledgement, and recovery are tested.
+- [x] English and Spanish UI plus existing setup behavior are preserved.
+- [x] Real packaged smoke tests and repository gates pass.
+- [x] User documentation describes implemented behavior accurately.
+
+## Implementation result (2026-09-10)
+
+Implemented in this order, each stage tested before the next:
+
+1. `strom/linux_gui/app_identity.py` — version from package metadata
+   (shipped in the frozen bundle via `copy_metadata` in `strom.spec`), ELF
+   machine read from the file itself, and a structured
+   :class:`InstallStatus` for source / extracted / installable / symlink /
+   read-only / unsupported-arch cases. `packaging` added to the `gui`
+   extra; comparisons use `packaging.version.Version`.
+2. `strom/linux_gui/updates.py` — pure selection: drafts and malformed
+   non-`v` tags ignored safely; exactly-one required assets or the release
+   is counted but not installable; channel rule (stable follows stable,
+   prerelease follows newer prereleases, never a downgrade); pagination
+   cap reported as INCOMPLETE, never as "up to date".
+3. `strom/linux_gui/update_service.py` — `UpdateService` (QNetworkAccess
+   Manager, manual HTTPS-only redirects to the supported hosts, bounded
+   metadata reads, incremental SHA-256 streaming into a staging file,
+   release-recorded and documented size caps, per-request and total
+   timeouts, cancel with staging cleanup, stale-callback token guard) and
+   `UpdateCoordinator` (states Idle/Checking/Available/Downloading/
+   Verifying/Installing/Restarting/Failed, the cycle/update interlock,
+   `request_close()` refusal during Installing, closing during a download
+   cancels and removes staging, off-thread prepare/commit phases, the
+   offline self-test of the candidate with a timeout, the restart
+   handshake over a private local socket with a per-attempt token).
+4. The interlock: Run and Update handlers enforce the guard regardless of
+   widget state through one centralized `_refresh_controls`; accepting an
+   install blocks heating runs until failure or restart; the cycle guard
+   is repeated immediately before the replacement; the heating child is
+   never killed, detached or waited on — the only process stopped is the
+   updater-launched candidate, which cannot have started heating while the
+   handshake was incomplete.
+5. `strom/linux_gui/update_install.py` — per-target update lock (flock;
+   cycle entry points hold it shared), identity/permission/disk/
+   checksum revalidation, one recoverable backup (hard link with a copy
+   fallback), atomic `os.replace` + directory fsync, an atomic journal
+   (QSaveFile) recording only installation metadata with updater-owned
+   path validation, rollback before replacement, restore-after-failed
+   restart, bounded backup pruning, and startup recovery for staged /
+   replaced / acknowledged journals that refuses updates on untrusted
+   journals instead of guessing.
+6. `strom/linux_gui/update_dialog.py` + window wiring: Help-menu action,
+   a separate update dialog with current/available versions, progress and
+   concise recovery actions, a non-modal notice for the automatic check,
+   **Update and restart** only for supported writable AppImages with the
+   release-page fallback, and full Spanish translations with live
+   language switching.
+7. Self-test extended with offline TLS-support and version-metadata
+   checks; `strom.spec` ships the package metadata; README updated.
+
+Verification performed:
+
+- flake8, mypy (25 files), the full deterministic suite (331 tests) and the
+  GUI suite (181 tests, 84% coverage on `strom/linux_gui`) pass; the CLI
+  coverage floor and gates are unchanged.
+- `packaging/appimage/build.sh` ran end to end with the updater changes:
+  staged AppRun self-test, FUSE-mount launch, extract-and-run, and the
+  Ubuntu 22.04 container verification (extract-and-run + X11/Xvfb via
+  Xvfb) all passed, including the new TLS and version-metadata checks
+  (PySide6 6.11.2).
+- The transaction itself (locks, backup, replacement, rollback, recovery,
+  concurrent attempts, paths with spaces and unicode, permission
+  failures, process death between steps) is exercised on real temporary
+  AppImages in `tests/linux_gui/test_update_install.py` plus coordinator
+  end-to-end tests with fake children in `tests/linux_gui/test_updates.py`.
+
+Not verified (honest):
+
+- An old-to-new update against a live release endpoint on the real bundle:
+  no newer release exists and publishing one merely to validate is out of
+  scope for this task; the transaction paths were verified on real files
+  instead.
+- A real desktop (X11/Wayland) acceptance session of the updater UI;
+  automation covers offscreen Qt and X11 under Xvfb only.
 
 ## External API references
 

@@ -12,9 +12,14 @@
 
 import importlib.util
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 datas = collect_data_files("strom.linux_gui")
+
+# The updater's version lookup reads package metadata (importlib.metadata);
+# shipping the dist-info keeps the frozen build reporting its real version,
+# from the same pyproject source the pip build uses (update plan §1).
+datas += copy_metadata("strom")
 
 # zoneinfo consults the system tzdata (/usr/share/zoneinfo) first and falls
 # back to the bundled tzdata package only if that fails. Shipping it keeps

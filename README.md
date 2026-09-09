@@ -119,6 +119,36 @@ client libraries) are expected to work, but Strom does not promise automatic
 updates, automatic menu integration, or compatibility with every Linux
 distribution or architecture.
 
+### Updating from the GUI
+
+The desktop GUI can check for a newer release and install it over the
+running AppImage:
+
+- **Check for updates** lives in the application menu (Help) and is also
+  run once, silently, a few seconds after the window opens. Checks use
+  GitHub's public releases API (no credentials) and never send your
+  configuration anywhere.
+- Stable installations are offered stable releases; prerelease
+  installations (like the current 0.3.0 alpha) also see newer prereleases.
+  Downgrades are never offered.
+- On a writable AppImage installation, **Update and restart** downloads the
+  new AppImage, verifies it against the release's `SHA256SUMS`, runs the
+  bundled offline self-test, and replaces the running AppImage atomically;
+  the previous version is preserved beside the target until the new one is
+  confirmed. The new instance must report a successful start before the old
+  window closes, and a failed start restores the previous version
+  automatically. A heating cycle is never interrupted: installation is
+  unavailable while a cycle runs, and starting a cycle is blocked once an
+  update is accepted.
+- Source/pip installations, extracted AppDirs, read-only locations, and
+  unsupported architectures get an honest **Open release page** fallback
+  with manual installation steps instead. There is still no automatic,
+  scheduled, or privileged updating; the transaction is integrity-checked
+  against the release checksum, which detects corruption and mismatch but
+  is not a release signature.
+- The first updater-enabled release (0.3.0a1) must still be installed
+  manually: older releases cannot discover an updater they do not contain.
+
 ## Usage
 
 [Technical documentation](https://janbalanya.com/strom-docs/)
@@ -166,6 +196,9 @@ library requirements.
 
 ### What the GUI does in this version
 
+- Check for and install Strom updates from the application menu (see
+  "Updating from the GUI" above); release checks are silent and never
+  interrupt setup or a running cycle.
 - Guide first-time users through three setup screens: **Weather forecast**,
   **Electricity prices**, and **Your smart plug**. Continue saves the current
   details; errors stay on the same screen. Back lets you revisit earlier steps,

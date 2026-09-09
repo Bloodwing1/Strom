@@ -140,6 +140,24 @@ def _check_child_round_trip(config_dir: Path) -> None:
         raise AssertionError(f"child did not print CLI usage: {output.strip()}")
 
 
+def _check_tls_support() -> None:
+    """Qt's TLS support loads offline; the updater's HTTPS checks need it."""
+    from PySide6.QtNetwork import QSslSocket
+
+    if not QSslSocket.supportsSsl():
+        raise AssertionError("Qt TLS support is unavailable in this bundle")
+
+
+def _check_version_metadata() -> None:
+    """The frozen bundle carries the package version metadata."""
+    from strom.linux_gui.app_identity import runtime_version
+
+    if runtime_version() is None:
+        raise AssertionError(
+            "package version metadata is missing; in-place updating would be disabled"
+        )
+
+
 def run_self_test() -> int:
     """Run every check; print progress, exit nonzero on the first failure."""
     with tempfile.TemporaryDirectory(prefix="strom-self-test-") as raw_dir:
@@ -153,6 +171,8 @@ def run_self_test() -> int:
                 lambda: _check_gui_construction(config_dir),
             ),
             ("Packaged icons and Spanish translations", _check_icons_and_translations),
+            ("Qt TLS support for update checks", _check_tls_support),
+            ("Package version metadata", _check_version_metadata),
             ("Weather, price and Tapo module imports", _check_module_imports),
             ("CLARABEL optimization solve", _check_clarabel_solve),
             ("Child dispatcher round trip", lambda: _check_child_round_trip(config_dir)),

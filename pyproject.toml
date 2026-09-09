@@ -29,6 +29,7 @@ dependencies = [
 # README once verified on the Linux target.
 gui = [
     "PySide6>=6.8,<7",
+    "packaging>=24",
 ]
 gui-dev = [
     "pytest-qt>=4.4,<5",
@@ -68,7 +69,8 @@ markers = [
 
 [tool.coverage.run]
 source = ["strom"]
-# Optional GUI coverage is measured separately in the Qt-enabled CI job.
+# Optional GUI coverage is measured separately in the Qt-enabled CI job,
+# which also covers the updater modules in strom/linux_gui.
 omit = ["strom/plot_utils.py", "strom/linux_gui/*"]
 
 [tool.mutmut]

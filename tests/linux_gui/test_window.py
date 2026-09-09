@@ -917,3 +917,195 @@ def test_selected_location_passed_to_production_child(make_window, monkeypatch, 
     monkeypatch.setattr(window._runner, "start", lambda spec: specs.append(spec) or True)
     window._on_run_clicked()
     assert specs[0].arguments[-2:] == ("--city", "Albarracín, ES")
+
+
+# --- update button and lifecycle (update plan §4, §6) ---
+
+
+def test_update_menu_and_dialog_exist(qtbot, make_window):
+    window = make_window()
+    assert window._help_menu.title() == "Help"
+    assert window._check_updates_action.text() == "Check for updates"
+    assert window._update_notice.isHidden()
+    window._check_updates_action.trigger()
+    assert window._update_dialog is not None
+    assert window._update_dialog.isVisible()
+    assert window._update_dialog._check_button.text() == "Check for updates"
+
+
+def test_dialog_shows_current_version(qtbot, make_window):
+    from strom.linux_gui.app_identity import runtime_version
+
+    window = make_window()
+    window._check_updates_action.trigger()
+    dialog = window._update_dialog
+    expected = str(runtime_version())
+    assert dialog._current_label.text() == expected  # installed metadata
+    assert dialog._available_label.text() == "—"
+
+
+def test_source_mode_offers_release_page_instead_of_install(qtbot, make_window):
+    window = make_window()
+    window._check_updates_action.trigger()
+    dialog = window._update_dialog
+    assert dialog._install_button.isHidden()
+    assert not dialog._page_button.isHidden()
+
+
+from strom.linux_gui.update_service import UpdateService  # noqa: E402
+from strom.linux_gui.update_service import ServiceConfig, UrlPolicy  # noqa: E402
+from PySide6.QtCore import QCoreApplication  # noqa: E402
+
+
+def test_manual_check_failure_is_explained_in_dialog(
+    qtbot, make_window, fake_service
+):
+    window = make_window()
+    fake_service.routes = {
+        "/fixtures/releases?per_page=100&page=1": (404, b"no"),
+    }
+    service = UpdateService(
+        QCoreApplication.instance(),
+        config=ServiceConfig(releases_url=f"{fake_service.base}/fixtures/releases"),
+        policy=UrlPolicy(
+            download_hosts=(fake_service.base.replace("http://", ""),),
+            asset_prefix="/fixtures/download/",
+            scheme="http",
+        ),
+        current=window._update_status.version,
+        arch=None,
+    )
+    window._update_service = service
+    window._updater.swap_service(service)
+    window._check_updates_action.trigger()
+    dialog = window._update_dialog
+    qtbot.waitUntil(
+        lambda: "could not be found" in dialog._status_label.text(), timeout=10_000
+    )
+    assert dialog._status_label.text()
+
+
+def test_run_refused_during_installation_even_when_button_enabled(
+    qtbot, make_window, tmp_path, monkeypatch
+):
+    from strom.linux_gui.update_service import UpdateState
+
+    record = []
+    window = make_window(spec_factory=child_factory("slow.py", record))
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    window._config_dir_edit.setText(str(config_dir))
+    monkeypatch.setattr(window, "_confirm_run", lambda: True)
+    # Simulate an accepted update reaching the installation transaction.
+    window._updater._state = UpdateState.Installing
+    window._updater.stateChanged.emit(window._updater.state)
+    window._run_button.setEnabled(True)  # guard must not depend on the widget
+
+    window._run_button.click()
+
+    assert record == []  # no heating cycle started during the update
+    assert "blocked" in window._status_label.text()
+    assert window._updater.state is UpdateState.Installing
+    # Leave the window idle so pytest-qt's teardown close succeeds.
+    window._updater._state = UpdateState.Idle
+
+
+def test_install_refused_during_installation(qtbot, make_window):
+    from strom.linux_gui.update_service import UpdateState
+
+    window = make_window()
+    window._updater._state = UpdateState.Installing
+    window._updater.stateChanged.emit(window._updater.state)
+    accepted = window._updater.accept_install(object())
+    assert accepted is False
+    assert window._updater.state is UpdateState.Installing
+    window._updater._state = UpdateState.Idle
+
+
+def test_close_refused_during_installation(qtbot, make_window, monkeypatch):
+    from strom.linux_gui.update_service import UpdateState
+
+    window = make_window()
+    window.show()
+    window._updater._state = UpdateState.Installing
+    window._updater.stateChanged.emit(window._updater.state)
+    refusals = []
+    monkeypatch.setattr(
+        window, "_explain_update_refusal", lambda reason: refusals.append(reason)
+    )
+
+    window.close()
+
+    assert refusals and "installed" in refusals[0]
+    assert window.isVisible()  # close refused; the window stays open
+    # Reset so the teardown close is not refused again.
+    window._updater._state = UpdateState.Idle
+
+
+def test_automatic_check_notice_is_non_modal(qtbot, make_window, tmp_path, monkeypatch):
+    from packaging.version import Version
+
+    from strom.linux_gui import updates as release_updates
+
+    window = make_window()
+    window.show()
+    candidate = release_updates.ReleaseInfo(
+        tag="v0.4.0",
+        version=Version("0.4.0"),
+        prerelease=False,
+        appimage=release_updates.ReleaseAsset(
+            name="Strom-0.4.0-x86_64.AppImage", url="https://x", size=1
+        ),
+        checksums=release_updates.ReleaseAsset(name="SHA256SUMS", url="https://x", size=0),
+    )
+    selection = release_updates.Selection(
+        kind=release_updates.SelectionKind.AVAILABLE, candidate=candidate
+    )
+    window._updater.updateNotice.emit(selection)
+
+    assert not window._update_notice.isHidden()
+    assert "0.4.0" in window._update_notice_label.text()
+    # The notice only shows widgets; it never opens a modal dialog or
+    # forces the window to the front.
+    assert QtWidgets.QApplication.activeModalWidget() is None
+
+
+def test_spanish_translations_cover_update_texts(make_window, monkeypatch):
+    window = make_window()
+    window._language.setCurrentIndex(1)  # Spanish
+    assert window._check_updates_action.text() == "Buscar actualizaciones"
+    assert window._update_notice_button.text() == "Detalles…"
+    window._check_updates_action.trigger()
+    dialog = window._update_dialog
+    assert dialog.windowTitle() == "Buscar actualizaciones"
+    assert dialog._check_button.text() == "Buscar actualizaciones"
+    assert dialog._page_button.text() == "Abrir la página de versiones"
+    assert dialog._close_button.text() == "Cerrar"
+
+
+def test_cycle_running_blocks_install_and_child_stays_alive(
+    qtbot, make_window, monkeypatch
+):
+    from packaging.version import Version
+
+    from strom.linux_gui import updates as release_updates
+
+    record = []
+    window = make_window(spec_factory=child_factory("slow.py", record))
+    window._config_dir_edit.setText("/tmp")
+    monkeypatch.setattr(window, "_confirm_run", lambda: True)
+    window._run_button.click()
+    wait_state(qtbot, window, RunnerState.Running)
+    candidate = release_updates.ReleaseInfo(
+        tag="v0.4.0",
+        version=Version("0.4.0"),
+        prerelease=False,
+        appimage=release_updates.ReleaseAsset(
+            name="Strom-0.4.0-x86_64.AppImage", url="https://x", size=1
+        ),
+        checksums=release_updates.ReleaseAsset(name="SHA256SUMS", url="https://x", size=0),
+    )
+    assert window._updater.accept_install(candidate) is False
+    assert window._runner.is_active()  # the cycle is untouched
+    wait_state(qtbot, window, RunnerState.Completed)
+    assert record == [(Path("/tmp"), 24, "INFO")]
