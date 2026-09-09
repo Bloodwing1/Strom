@@ -82,8 +82,13 @@ A self-contained desktop build of Strom is published on the
 dependencies, so it runs on a plain Linux x86_64 desktop without Python, pip,
 or a source checkout.
 
+The current release is **0.3.0a1 (alpha)**:
+[Strom-0.3.0a1-x86_64.AppImage](https://github.com/Bloodwing1/Strom/releases/tag/v0.3.0a1).
+It is marked as a pre-release — expect changes, and please report anything
+that misbehaves.
+
 1. Download `Strom-<version>-x86_64.AppImage` and `SHA256SUMS` from the
-   [latest release](https://github.com/Bloodwing1/Strom/releases/latest).
+   [release page](https://github.com/Bloodwing1/Strom/releases).
 2. Verify the download:
 
    ```sh

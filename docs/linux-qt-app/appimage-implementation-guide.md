@@ -353,8 +353,8 @@ complete release rerun is a no-op; documentation makes no untested promises.
 - [x] Step 1 — complete (dispatcher, frozen-aware launch specification, tests).
 - [x] Step 2 — complete (staging build, AppDir, AppImage, artifact verification;
       log above).
-- [x] Step 3 — implemented and locally validated; **not yet run on GitHub**
-      (log below). No release has been published and no tag has been pushed.
+- [x] Step 3 — implemented; first real GitHub runs observed and the first
+      release published by the workflow (log below).
 
 ### Step 3 log (2026-09-09)
 
@@ -396,13 +396,26 @@ Local validation performed (not a GitHub run):
 - The build, verification, and release scripts themselves were exercised
   end to end locally in step 2 (see the step 2 log above).
 
-Not yet verified — deliberately left for the first real run on GitHub:
+First real runs on GitHub (2026-09-09, observed end to end):
 
-- The workflow has never executed on GitHub Actions; its first PR/dispatch
-  run must be observed before any release is cut, and the tag-triggered
-  publication path must be watched end to end (including `--verify-tag`
-  behavior and asset round-trip) for the actual first versioned release.
-- No tag has been pushed and no release, draft or published, exists.
+- PR #40 (`qt-gui` -> `main`): three build-only runs; the first two surfaced
+  real defects recorded above (stdlib `lib-dynload` extensions dropped by the
+  bundle filter; missing host `libEGL.so.1` on the runner), both fixed and
+  reproduced locally first. Green before merge.
+- Tag `v0.3.0a1` push: the release workflow ran the gates for the tagged
+  commit, built and verified the artifact, validated the tag against
+  `pyproject.toml`, and published the prerelease
+  `Strom-0.3.0a1-x86_64.AppImage` plus `SHA256SUMS` after the round-trip
+  checksum check — the alpha release path works end to end.
+
+Still unverified (honest):
+
+- The release job's rerun paths: no-op on an identical published release,
+  loud refusal on a differing one, and draft resumption.
+- FUSE-mounted launch on an Ubuntu 22.04 desktop (proven on the build host;
+  containers have no `/dev/fuse`).
+- A Wayland session (automation covers offscreen Qt and X11/Xvfb only).
+- Real-hardware runs on distributions beyond the verification container.
 
 ### Step 2 verification log (2026-09-09)
 
