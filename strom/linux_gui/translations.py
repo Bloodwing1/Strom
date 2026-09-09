@@ -31,7 +31,7 @@ SPANISH = {
         'que pulses Ejecutar un ciclo.'
     ),
     'Set up Strom': 'Configurar Strom',
-    'Step {step} of 3 · {name}': 'Paso {step} de 3 · {name}',
+    'Step {step} of 4 · {name}': 'Paso {step} de 4 · {name}',
     'Weather forecast': 'Previsión del tiempo',
     'Electricity prices': 'Precios de electricidad',
     'Your smart plug': 'Tu enchufe inteligente',

@@ -4,7 +4,8 @@ The window is written for people who have never used a terminal: every
 technical term is explained in plain language, and the one-time setup can be
 completed by pasting keys into the window instead of creating files by hand.
 
-Setup presents one account at a time, followed by a separate heating page.
+Setup starts with location and language, then presents one account at a time,
+followed by a separate heating page.
 Advanced folder and logging controls are collapsed by default.
 
 Safety-critical behavior from the implementation plan is unchanged: the
@@ -254,13 +255,12 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._step_label)
         self._account_pages = QtWidgets.QStackedWidget(group)
         for builder in (
-            self._build_weather_block, self._build_price_block, self._build_tapo_block
+            self._build_location_block, self._build_weather_block,
+            self._build_price_block, self._build_tapo_block
         ):
             page = QtWidgets.QWidget(group)
             page_layout = QtWidgets.QVBoxLayout(page)
             page_layout.setContentsMargins(0, 0, 0, 0)
-            if self._account_pages.count() == 0:
-                page_layout.addWidget(self._build_location_block(page))
             page_layout.addWidget(builder(page))
             page_layout.addStretch(1)
             self._account_pages.addWidget(page)
@@ -282,7 +282,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._setup_later)
         self._advanced_toggle = QtWidgets.QCheckBox("Advanced settings", group)
         layout.addWidget(self._advanced_toggle)
-        advanced = QtWidgets.QWidget(group)
+        advanced = self._advanced_settings = QtWidgets.QWidget(group)
         layout.addWidget(advanced)
         self._advanced_toggle.toggled.connect(advanced.setVisible)
         advanced.hide()
@@ -328,39 +328,47 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _show_step(self, index: int) -> None:
         self._account_pages.setCurrentIndex(index)
-        names = ("Weather forecast", "Electricity prices", "Your smart plug")
-        template = self._translated("Step {step} of 3 · {name}")
+        names = ("Location and language", "Weather forecast",
+                 "Electricity prices", "Your smart plug")
+        template = self._translated("Step {step} of 4 · {name}")
         self._step_label.setText(
             template.format(step=index + 1, name=self._translated(names[index]))
         )
         self._back_button.setEnabled(index > 0)
-        self._next_button.setText(self._translated("Finish setup" if index == 2 else "Continue"))
-        fields = (self._weather_key_edit, self._price_key_edit, self._tapo_email)
+        self._next_button.setText(self._translated("Finish setup" if index == 3 else "Continue"))
+        self._advanced_toggle.setVisible(index > 0)
+        self._advanced_settings.setVisible(index > 0 and self._advanced_toggle.isChecked())
+        fields = (self._country, self._weather_key_edit, self._price_key_edit, self._tapo_email)
         fields[index].setFocus()
 
     def _continue_setup(self) -> None:
         index = self._account_pages.currentIndex()
         if not self._valid_location():
             return
+        if index == 0:
+            self.save_settings()
+            self._show_step(1)
+            return
+        account_index = index - 1
         fields = (
             (self._weather_key_edit,),
             (self._price_key_edit,),
             (self._tapo_email, self._tapo_password, self._tapo_ip),
         )
         # Save edits before leaving; a failed save keeps its inline error visible.
-        if any(field.text() for field in fields[index]):
-            (self._on_save_weather, self._on_save_price, self._on_save_tapo)[index]()
-            if any(field.text() for field in fields[index]):
+        if any(field.text() for field in fields[account_index]):
+            (self._on_save_weather, self._on_save_price, self._on_save_tapo)[account_index]()
+            if any(field.text() for field in fields[account_index]):
                 return
         status = self._current_setup_status()
         ready = (status.weather_key_saved, status.price_key_saved, status.tapo_saved)
-        if not ready[index]:
-            (self._weather_status, self._price_status, self._tapo_status)[index].setText(
+        if not ready[account_index]:
+            (self._weather_status, self._price_status, self._tapo_status)[account_index].setText(
                 self._translated("Add your details to continue, or choose Set up later.")
             )
             return
         self.save_settings()
-        if index == 2:
+        if index == 3:
             self._finish_setup()
         else:
             self._show_step(index + 1)
@@ -750,7 +758,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if all(ready):
             self._pages.setCurrentIndex(1)
         else:
-            self._show_step(ready.index(False))
+            self._show_step(ready.index(False) + 1 if any(ready) else 0)
 
     def save_settings(self) -> None:
         """Persist non-secret UI preferences; called when a run is accepted."""

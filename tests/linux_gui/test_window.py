@@ -806,24 +806,25 @@ def test_wizard_saves_and_moves_one_account_at_a_time(make_window, tmp_path):
     assert window._pages.currentIndex() == 0
     assert not window._back_button.isEnabled()
     window._next_button.click()
-    assert window._account_pages.currentIndex() == 0
+    window._next_button.click()
+    assert window._account_pages.currentIndex() == 1
     assert "Add your details" in window._weather_status.text()
     window._weather_key_edit.setText("weather")
     window._next_button.click()
-    assert window._account_pages.currentIndex() == 1
+    assert window._account_pages.currentIndex() == 2
     assert window._weather_key_edit.text() == ""
     window._back_button.click()
-    assert window._account_pages.currentIndex() == 0
+    assert window._account_pages.currentIndex() == 1
     window._next_button.click()
     window._price_key_edit.setText("prices")
     window._next_button.click()
-    assert window._account_pages.currentIndex() == 2
+    assert window._account_pages.currentIndex() == 3
     assert window._next_button.text() == "Finish setup"
     window._tapo_email.setText("user@example.com")
     window._tapo_password.setText("secret")
     window._tapo_ip.setText("invalid")
     window._next_button.click()
-    assert window._account_pages.currentIndex() == 2
+    assert window._account_pages.currentIndex() == 3
     assert window._pages.currentIndex() == 0
     window._tapo_ip.setText("192.168.1.42")
     window._next_button.click()
@@ -842,7 +843,7 @@ def test_partial_setup_resumes_and_details_are_opt_in(make_window, tmp_path):
     window._on_save_weather()
     window.save_settings()
     restored = make_window()
-    assert restored._account_pages.currentIndex() == 1
+    assert restored._account_pages.currentIndex() == 2
     restored._setup_later.click()
     assert restored._pages.currentIndex() == 1
     assert restored._details.isHidden()
@@ -855,11 +856,12 @@ def test_wizard_keeps_unsaved_replacement_on_save_failure(make_window, tmp_path)
     window = make_window()
     window._config_dir_edit.setText(str(tmp_path / "accounts"))
     window._open_setup()
+    window._next_button.click()
     window._weather_key_edit.setText("original")
     window._on_save_weather()
     window._weather_key_edit.setText("invalid\nkey")
     window._next_button.click()
-    assert window._account_pages.currentIndex() == 0
+    assert window._account_pages.currentIndex() == 1
     assert window._weather_key_edit.text()
     assert (tmp_path / "accounts" / "weather_api_key.txt").read_text() == "original\n"
 
@@ -868,13 +870,26 @@ def test_location_and_language_first_step(make_window, settings):
     window = make_window()
     assert window._account_pages.currentIndex() == 0
     assert window._account_pages.currentWidget().isAncestorOf(window._city)
+    first_page = window._account_pages.currentWidget()
+    assert first_page.isAncestorOf(window._language)
+    assert not first_page.isAncestorOf(window._weather_key_edit)
+    assert window._advanced_toggle.isHidden()
+    assert window._advanced_settings.isHidden()
+    assert window._account_pages.count() == 4
     assert window._country.count() == 1
     assert window._country.currentData() == "ES"
     window._city.setCurrentText("Albarracín")
     window._language.setCurrentIndex(1)
     assert window._next_button.text() == "Continuar"
     assert "Albarracín" in window._location_note.text()
-    window.save_settings()
+    window._next_button.click()
+    assert window._account_pages.currentIndex() == 1
+    assert window._account_pages.currentWidget().isAncestorOf(window._weather_key_edit)
+    assert not window._advanced_toggle.isHidden()
+    window._advanced_toggle.setChecked(True)
+    window._back_button.click()
+    assert window._advanced_settings.isHidden()
+    assert "Paso 1 de 4" in window._step_label.text()
     restored = make_window()
     assert restored._city.currentText() == "Albarracín"
     assert restored._language.currentData() == "es"
@@ -886,6 +901,8 @@ def test_invalid_location_stays_in_setup(make_window):
     window = make_window()
     for city in ("", "  ", "Paris, FR"):
         window._city.setCurrentText(city)
+        window._next_button.click()
+        assert window._account_pages.currentIndex() == 0
         window._finish_setup()
         assert window._pages.currentIndex() == 0
         assert window._location_error.text()
