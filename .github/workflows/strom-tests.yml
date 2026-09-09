@@ -2,7 +2,12 @@
 # clean-checkout smoke test. No provider secrets are used here.
 name: Tests
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # Called by .github/workflows/strom-appimage.yml so the AppImage release
+  # depends on these same blocking gates for the exact commit being built.
+  workflow_call:
 
 permissions:
   contents: read
@@ -33,6 +38,37 @@ jobs:
 
       - name: Deterministic tests with coverage floor (blocking)
         run: pytest --cov=strom --cov-report=term-missing --cov-fail-under=70
+
+  gui:
+    name: Linux GUI (offscreen)
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.8"
+          cache: pip
+
+      # QtGui links EGL even when no display server is used.
+      - name: Install Linux Qt runtime library
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libegl1
+
+      - name: Install package with dev, GUI, and GUI-test tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui,gui-dev]"
+
+      - name: GUI test suite (offscreen)
+        run: pytest tests/linux_gui --cov=strom/linux_gui --cov-config=/dev/null --cov-report=term-missing --cov-fail-under=70
+
+      - name: Type-check GUI modules (PySide6 installed)
+        run: mypy strom/linux_gui
 
   smoke:
     name: Clean-install smoke test

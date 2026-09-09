@@ -1,0 +1,8 @@
+# Deliberate build-tool set for the frozen Strom AppImage build.
+# Runtime application dependencies are constrained by build-constraints.txt
+# and pyproject.toml; never substitute the developer's pip freeze here.
+pyinstaller==6.22.2
+# Bundled as zoneinfo's fallback so timestamp code works even on systems
+# whose /usr/share/zoneinfo is absent or incomplete (caught by the Ubuntu
+# 22.04 container test; the build host's tzdata had hidden the gap).
+tzdata==2026.3

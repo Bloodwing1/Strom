@@ -150,6 +150,7 @@ def get_temp_price_df(
     *,
     horizon_hours: int = 24,
     zone: str = "ES",
+    city: str = "Barcelona, ES",
     now: pd.Timestamp | None = None,
     weather_max_gap: pd.Timedelta = pd.Timedelta(hours=3),
     price_max_fill: pd.Timedelta = pd.Timedelta(hours=1),
@@ -166,7 +167,7 @@ def get_temp_price_df(
                            tz=CANONICAL_TZ)
 
     if weather is None:
-        weather = get_weather_data()
+        weather = get_weather_data(city=city)
     if prices is None:
         prices = get_price_series(zone=zone, end=target[-1])
 

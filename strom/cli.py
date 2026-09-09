@@ -26,12 +26,12 @@ logger = logging.getLogger(__name__)
 
 
 def build_controller_deps(config: AppConfig,
-                          horizon_hours: int) -> ControllerDeps:
+                          horizon_hours: int, city: str = "Barcelona, ES") -> ControllerDeps:
     """Wire production dependencies from validated configuration."""
     from strom.data_utils import get_temp_price_df
 
     def fetch_data():
-        return get_temp_price_df(horizon_hours=horizon_hours)
+        return get_temp_price_df(horizon_hours=horizon_hours, city=city)
 
     return ControllerDeps(
         fetch_data=fetch_data,
@@ -71,6 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging verbosity (default INFO).",
     )
+    parser.add_argument("--city", default="Barcelona, ES",
+                        help="Weather location, including country code (default: Barcelona, ES).")
     return parser
 
 
@@ -87,7 +89,7 @@ def run(argv: list[str] | None = None) -> int:
                 f"--horizon-hours must be >= 1, got {args.horizon_hours}."
             )
         config = load_app_config(args.config_dir)
-        deps = build_controller_deps(config, args.horizon_hours)
+        deps = build_controller_deps(config, args.horizon_hours, args.city)
         asyncio.run(run_cycle(config, deps))
     except StromError as exc:
         logger.error("Strom finished with an operational failure: %s", exc)

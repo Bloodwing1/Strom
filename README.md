@@ -74,12 +74,54 @@ Python (and Node for the git hooks) is provisioned automatically.
  If the file is malformed or contains unknown keys, Strom fails fast with an
  actionable error instead of guessing.
 
+## AppImage for Linux (no Python needed)
+
+A self-contained desktop build of Strom is published on the
+[GitHub Releases page](https://github.com/Bloodwing1/Strom/releases) as
+`Strom-<version>-x86_64.AppImage`. It bundles Python, the GUI and all
+dependencies, so it runs on a plain Linux x86_64 desktop without Python, pip,
+or a source checkout.
+
+1. Download `Strom-<version>-x86_64.AppImage` and `SHA256SUMS` from the
+   [latest release](https://github.com/Bloodwing1/Strom/releases/latest).
+2. Verify the download:
+
+   ```sh
+   sha256sum -c SHA256SUMS
+   ```
+
+3. Make it executable and run it:
+
+   ```sh
+   chmod +x Strom-<version>-x86_64.AppImage
+   ./Strom-<version>-x86_64.AppImage
+   ```
+
+If launching fails with a FUSE error, either install your distribution's
+libfuse2 package, or run without FUSE:
+
+```sh
+./Strom-<version>-x86_64.AppImage --appimage-extract-and-run
+```
+
+Replacing the AppImage with a newer release updates the application; your
+settings, keys, and credentials stay in the user configuration directory
+(`~/.config/strom` and the GUI's saved preferences), never inside the
+AppImage. The build is verified against an Ubuntu 22.04 (glibc 2.35)
+compatibility baseline, including an X11 smoke test; distributions with the
+standard desktop libraries (libglib, libdbus, libfontconfig, X11 or Wayland
+client libraries) are expected to work, but Strom does not promise automatic
+updates, automatic menu integration, or compatibility with every Linux
+distribution or architecture.
+
 ## Usage
 
 [Technical documentation](https://janbalanya.com/strom-docs/)
 
-The single supported entry point is the `strom` CLI (also available as
-`python -m strom`):
+The `strom` CLI (also available as `python -m strom`) is the single supported
+entry point for the control logic. The optional desktop GUI (below) delegates
+every run to this same, unchanged code path — it is a convenient front end,
+not a separate implementation:
 
 ```sh
 strom --config-dir ./config --horizon-hours 24 --log-level INFO
@@ -93,6 +135,112 @@ output for each interval is translated into an exact ON/OFF schedule for the
 smart plug, and an independent watchdog forces the plug off if it ever stays
 on too long.
 
+## Desktop GUI (Linux)
+
+An optional native desktop GUI built on Qt 6 Widgets (PySide6) is available.
+It was verified against **PySide6 6.11.2**; desktop acceptance testing on a
+real Linux X11/Wayland session is tracked separately, so offscreen test
+results should not be read as desktop verification.
+
+Install it on top of the normal installation:
+
+```sh
+pip install '.[gui]'
+```
+
+Then launch it from any directory with either of:
+
+```sh
+strom-gui
+python -m strom.linux_gui
+```
+
+Both launchers need Python 3.12.8 and a working Qt 6 desktop environment
+(X11 or Wayland); a PySide6 wheel does not remove your distribution's shared
+library requirements.
+
+### What the GUI does in this version
+
+- Guide first-time users through three setup screens: **Weather forecast**,
+  **Electricity prices**, and **Your smart plug**. Continue saves the current
+  details; errors stay on the same screen. Back lets you revisit earlier steps,
+  and Set up later opens the heating screen without starting anything.
+  Each account has a "How do I get this?" helper. Returning users resume at
+  the first missing account, or go straight to heating when all details are
+  available. **Manage accounts** reopens setup.
+- Choose English or Spanish and a city or village on the first setup screen.
+  Spain is the only available country; more countries are work in progress.
+  Choose a suggested city or type a place name, which OpenWeatherMap resolves
+  when a cycle runs. The GUI passes the selected place with the ES country code
+  to the CLI through `--city`; electricity prices remain Spanish.
+- Keep the heating screen focused on planning and running one cycle. Log
+  preferences live under **More options**, and the live log is hidden until
+  **Show technical details** is selected. The settings folder defaults to
+  `~/.config/strom`; **Advanced settings** in setup reveals the custom-folder
+  controls for existing CLI users.
+- Paste-and-save setup: the weather key, the electricity price token, and
+  the Tapo account (email, password, plug IP) can be typed directly into
+  the window. Saving writes the exact files the CLI reads
+  (`weather_api_key.txt`, `price_api_key.txt`, `tapologin.env`) into the
+  selected folder — created automatically if needed — with mode 0600 so
+  other users on the machine cannot read them. Values are trimmed of
+  copy-paste whitespace; `tapologin.env` is round-trip verified with
+  python-dotenv's own parser before anything is written, so unusual
+  passwords are stored verbatim or not at all.
+- Show a readiness checklist (weather key / price key / plug account) that
+  updates as you save, and mention what is still missing in the run
+  confirmation if you start a cycle before finishing setup.
+- Select a configuration directory with the same file layout as the CLI
+  (`tapologin.env`, `price_api_key.txt`, `weather_api_key.txt`, optional
+  `house_config.json` — see Installation above); the folder is created on
+  demand if it does not exist yet.
+- Explain the technical controls: the optimization horizon (1–48 hours,
+  default 24 — how far ahead Strom plans, not how long a run takes), the
+  log detail level (INFO/WARNING/ERROR), and the selected weather location /
+  Spanish (ES) prices.
+- Run **one** control cycle. A confirmation dialog states that this operates
+  the real smart plug and may switch your heater on for one control interval
+  (about one hour) before anything happens; Cancel is the default.
+- Watch the cycle's output in a bounded, read-only log while it runs.
+
+### Configuration and environment precedence
+
+- The GUI starts the CLI with the selected directory exported as
+  `STROM_CONFIG_DIR` for that run; the CLI resolves the config path explicitly
+  and never depends on the directory the GUI was launched from.
+- Credentials and keys exported as environment variables (`EMAIL`,
+  `PASSWORD`, `DEVICEIP`, `WEATHER_API_KEY`, and `PRICE_API_KEY`) override
+  values from `tapologin.env` and the corresponding key files, exactly as
+  with the CLI.
+- The GUI remembers the last used directory, city, language, horizon, log level,
+  and window geometry. The initial directory is the saved path, then `STROM_CONFIG_DIR`,
+  then `~/.config/strom`. Only non-secret preferences are stored; API keys
+  never enter the GUI's settings.
+
+### Long-running behavior and limitations
+
+- Keep the window open until the cycle finishes. Closing while a cycle is
+  starting or running is refused with an explanation, and the child process
+  is never killed or detached; the run button and form stay disabled until
+  the cycle exits. There is deliberately **no Stop/Force-quit** control in
+  this version: no silent process termination.
+- Only one cycle runs at a time; duplicate starts are prevented. The setup
+  fields are disabled while a cycle runs so files cannot change mid-cycle.
+- Not included in this version: house-parameter editing (`house_config.json`
+  must still be created by hand), charts, scheduling, tray icon, autostart,
+  device discovery, and manual ON/OFF control.
+
+### Linux troubleshooting
+
+- An error such as "xcb plugin found but could not load" usually means
+  missing system shared libraries or a mixed Qt installation — not a missing
+  Python import. Check Qt's Linux requirements for the libraries your
+  distribution needs.
+- Do not force `QT_QPA_PLATFORM=xcb` globally or overwrite Qt plugin paths.
+  To diagnose a plugin problem, run once with `QT_DEBUG_PLUGINS=1` and clear
+  any stray Qt environment settings instead of hard-coding a workaround.
+- On Wayland the GUI uses the Wayland platform plugin automatically.
+
 ## Development
 
 - `mise run check` — lint, type-check and deterministic tests (what CI blocks on)
@@ -105,4 +253,4 @@ commit and the full check on push; enable them with `mise run hooks`.
 ## Future Considerations
 
 - Cron job installer
-- Standalone executable
+- Flatpak packaging (the AppImage release is the foundation)
