@@ -1,0 +1,6 @@
+# Pinned, hash-verified AppImage packaging tools (verify with sha256sum -c).
+# Sources (tagged releases, not continuous):
+#   https://github.com/AppImage/appimagetool/releases/tag/1.9.1
+#   https://github.com/AppImage/type2-runtime/releases/tag/20251108
+ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool-x86_64.AppImage
+2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  runtime-x86_64

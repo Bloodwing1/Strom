@@ -74,6 +74,46 @@ Python (and Node for the git hooks) is provisioned automatically.
  If the file is malformed or contains unknown keys, Strom fails fast with an
  actionable error instead of guessing.
 
+## AppImage for Linux (no Python needed)
+
+A self-contained desktop build of Strom is published on the
+[GitHub Releases page](https://github.com/Bloodwing1/Strom/releases) as
+`Strom-<version>-x86_64.AppImage`. It bundles Python, the GUI and all
+dependencies, so it runs on a plain Linux x86_64 desktop without Python, pip,
+or a source checkout.
+
+1. Download `Strom-<version>-x86_64.AppImage` and `SHA256SUMS` from the
+   [latest release](https://github.com/Bloodwing1/Strom/releases/latest).
+2. Verify the download:
+
+   ```sh
+   sha256sum -c SHA256SUMS
+   ```
+
+3. Make it executable and run it:
+
+   ```sh
+   chmod +x Strom-<version>-x86_64.AppImage
+   ./Strom-<version>-x86_64.AppImage
+   ```
+
+If launching fails with a FUSE error, either install your distribution's
+libfuse2 package, or run without FUSE:
+
+```sh
+./Strom-<version>-x86_64.AppImage --appimage-extract-and-run
+```
+
+Replacing the AppImage with a newer release updates the application; your
+settings, keys, and credentials stay in the user configuration directory
+(`~/.config/strom` and the GUI's saved preferences), never inside the
+AppImage. The build is verified against an Ubuntu 22.04 (glibc 2.35)
+compatibility baseline, including an X11 smoke test; distributions with the
+standard desktop libraries (libglib, libdbus, libfontconfig, X11 or Wayland
+client libraries) are expected to work, but Strom does not promise automatic
+updates, automatic menu integration, or compatibility with every Linux
+distribution or architecture.
+
 ## Usage
 
 [Technical documentation](https://janbalanya.com/strom-docs/)
@@ -213,4 +253,4 @@ commit and the full check on push; enable them with `mise run hooks`.
 ## Future Considerations
 
 - Cron job installer
-- Standalone executable
+- Flatpak packaging (the AppImage release is the foundation)

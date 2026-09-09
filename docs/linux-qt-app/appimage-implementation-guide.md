@@ -291,3 +291,169 @@ environment as a blanket fix. [PyInstaller subprocess pitfalls](https://pyinstal
 For later Flatpak work, reuse the application entry points, icons and safe
 offline verification. Flatpak will need its own manifest/runtime and sandbox
 storage/network decisions; do not put the AppImage inside a Flatpak.
+
+## Implementation plan: three steps
+
+The six "Build in this order" sections above are grouped into three reviewable
+steps. Each step must be verifiable on its own before the next one starts.
+
+### Step 1 — Packaged dispatcher and child launch specification
+
+Covers sections 1–2. Deliverables:
+
+- `packaging/appimage/` entry-point file with the internal command dispatcher
+  (`strom-gui`, `--strom-cli <args>`, `--strom-self-test`), internal switches
+  handled before QApplication creation.
+- `make_launch_spec()` with explicit source and frozen paths; frozen child
+  output flushes promptly by a supported, tested mechanism (not `-u`).
+- A PyInstaller spec, deterministic build script and pinned build dependency
+  set producing a clean staging directory (bundled payload, no host leakage).
+
+Exit criteria: dispatcher tests pass in source mode, the frozen launch
+specification shape is proven (including paths/city names with spaces and
+accents), the CLI branch is proven unable to open another GUI, `--strom-self-test`
+terminates by itself offline, and the staging build starts from a clean,
+non-editable install with pinned inputs.
+
+### Step 2 — AppDir assembly and artifact verification
+
+Covers sections 3–4. Deliverables:
+
+- `Strom.AppDir/` with a quoted, `exec`-ing AppRun, matching desktop entry and
+  the existing icon; staged AppRun runs before any AppImage is created.
+- `--strom-self-test` extended to the full section-4 checklist (isolated
+  MainWindow, icons, translation module, provider module imports without
+  contact, real tiny CLARABEL solve, child dispatcher round trip).
+- Verification of both the extracted AppDir and the final AppImage outside the
+  repository (no venv, no PYTHONPATH, temp config dir), X11 under Xvfb, FUSE
+  and extraction modes, with recorded provenance (commit, versions, baseline).
+
+Exit criteria: an AppImage built from the staging tree passes `--strom-self-test`
+and manual X11 checks on a clean baseline system; failures feed back into
+hooks/hidden imports with evidence.
+
+### Step 3 — Release automation and documentation
+
+Covers sections 5–6. Deliverables:
+
+- `.github/workflows/strom-appimage.yml`: PR and `workflow_dispatch` build-only,
+  `v*` tag push validates the tag against `pyproject.toml`, reuses the existing
+  gates for the same commit, publishes the exact tested artifact plus
+  `SHA256SUMS` as a draft-then-published GitHub Release with pinned actions and
+  rerun-safe semantics.
+- README installation section (download, checksum, FUSE fallback, settings
+  persistence) and maintainer documentation (local build command, pinned-input
+  updates, release procedure).
+
+Exit criteria: publication is impossible on a PR or failed gate; a matching
+complete release rerun is a no-op; documentation makes no untested promises.
+
+### Status
+
+- [x] Step 1 — complete (dispatcher, frozen-aware launch specification, tests).
+- [x] Step 2 — complete (staging build, AppDir, AppImage, artifact verification;
+      log above).
+- [x] Step 3 — implemented and locally validated; **not yet run on GitHub**
+      (log below). No release has been published and no tag has been pushed.
+
+### Step 3 log (2026-09-09)
+
+Implemented:
+
+- `.github/workflows/strom-tests.yml`: additive `workflow_call` trigger so
+  the AppImage release reuses the existing blocking gates (lint, typing,
+  deterministic tests, GUI tests, clean-install smoke) for the same commit;
+  nothing was removed or weakened.
+- `.github/workflows/strom-appimage.yml`: PR builds and `workflow_dispatch`
+  previews never publish; only an actual `v*` tag push reaches the release
+  job (`github.event_name == 'push'` and tag ref are both required). The
+  release job validates the tag against `pyproject.toml` (PEP 440
+  `vMAJOR.MINOR.PATCH` with optional `a`/`b`/`rc` prerelease, marked as such;
+  `.dev` and mismatches rejected), verifies the transported artifact against
+  the build job's recorded sha256 (job output plus a second in-artifact
+  record), creates a draft release with `gh release create --verify-tag`,
+  attaches `Strom-<version>-x86_64.AppImage` and a relative-filename
+  `SHA256SUMS`, downloads both back and re-verifies, and only then publishes.
+  Rerun-safe semantics: identical published artifact → no-op; differing
+  published binary → loud refusal; incomplete draft → resumed after tag
+  validation. Workflow-level concurrency groups per ref (no cancellation for
+  tag pushes). All actions pinned to verified commit SHAs (checkout v7.0.1,
+  setup-python v7.0.0, upload-artifact v7.0.1, download-artifact v8.0.1);
+  runner pinned to `ubuntu-22.04`; GitHub context reaches scripts only
+  through environment variables; `contents: write` is scoped to the release
+  job alone.
+- README: AppImage install section (download, checksum verification,
+  executable permission, FUSE fallback, settings persistence) with no
+  untested promises; the "standalone executable" future item is retired.
+- `packaging/appimage/README.md`: maintainer documentation (local build
+  command, pin-update procedures, release procedure, rerun semantics).
+
+Local validation performed (not a GitHub run):
+
+- YAML parses; `actionlint` 1.7.7 passes clean on both workflows; every
+  inline `run:` script passes `bash -n`; the tag-validation regex and the
+  pyproject version comparison were exercised directly.
+- The build, verification, and release scripts themselves were exercised
+  end to end locally in step 2 (see the step 2 log above).
+
+Not yet verified — deliberately left for the first real run on GitHub:
+
+- The workflow has never executed on GitHub Actions; its first PR/dispatch
+  run must be observed before any release is cut, and the tag-triggered
+  publication path must be watched end to end (including `--verify-tag`
+  behavior and asset round-trip) for the actual first versioned release.
+- No tag has been pushed and no release, draft or published, exists.
+
+### Step 2 verification log (2026-09-09)
+
+Build (one command: `packaging/appimage/build.sh`):
+
+- Fresh build venv (Python 3.12.8, never the developer's `.venv`), project
+  installed non-editably with `[gui]`; resolved inputs pinned in
+  `packaging/appimage/build-requirements.txt` (PyInstaller 6.22.2, tzdata
+  2026.3) and `build-constraints.txt` (60 pins); PySide6 6.11.2.
+- Bundle kept at the Ubuntu 22.04 baseline by shipping only wheel-provided
+  binaries plus `libpython` (spec filter); the build host's system libraries
+  (Bazzite 44, glibc 2.43) are resolved from the target system instead.
+- Runtime gaps found by the staged self-test and fixed with evidence in
+  `strom.spec`: cvxpy needs its package directory on disk (`py.typed` data
+  entry, for `os.listdir` at import), `osqp.ext_builtin` hidden import (every
+  frozen cvxpy import otherwise logs a solver error into the child log), and
+  bundled `tzdata` as zoneinfo's fallback (system `/usr/share/zoneinfo` was
+  missing only in the minimal container — the build host had hidden the gap).
+- ELF audit (in build.sh): bundle maxima GLIBC 2.34 / GLIBCXX 3.4.29 /
+  CXXABI 1.3.13 — within the Ubuntu 22.04 baseline (2.35 / 3.4.30 / 1.3.13).
+- AppDir: quoted, exec-ing `AppRun`; desktop entry validated with
+  `desktop-file-validate`; icon from the bundled assets; staged AppRun
+  self-test ran before any AppImage existed.
+- Artifact `Strom-0.2.0-x86_64.AppImage` (157 MiB,
+  sha256 751e129497e1e3ed73274c3a8e45545ad0a6f4992c7ebaaa635ea68501de405b)
+  built with hash-verified appimagetool 1.9.1 and type2-runtime 20251108.
+
+Verification of the exact artifact:
+
+- FUSE-mounted launch (build host, libfuse2): self-test passed, including the
+  frozen child dispatcher round trip through `make_launch_spec`.
+- Extract-and-run (build host and Ubuntu 22.04 container, glibc 2.35):
+  self-test passed with only the documented OS prerequisites installed
+  (libglib2.0-0, libfontconfig1, libegl1, libgl1, libdbus-1-3, libx11-6,
+  libx11-xcb1, libxkbcommon0, libxkbcommon-x11-0, libxcb1, libxcb-util1,
+  libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1,
+  libxcb-randr0, libxcb-render-util0, libxcb-render0, libxcb-shape0,
+  libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xkb1). The repeatable
+  recipe is checked in as `packaging/appimage/verify-ubuntu2204.sh` and runs
+  automatically from build.sh when podman is present.
+- Plain `--appimage-extract` + `squashfs-root/AppRun`: self-test passed.
+- X11 under Xvfb (Ubuntu 22.04 container): the real "Strom" window
+  (720x620, class `strom-gui`/`Strom`) mapped on the X server, verified via
+  `xwininfo` — not by a timeout kill.
+- Qt session note: bundled `libQt6Gui` links `libQt6DBus`, which requires
+  system `libdbus-1.so.3`; it joins libX11/libglib/etc. as documented
+  display/session prerequisites and is present on every desktop system.
+
+Not yet verified (recorded honestly):
+
+- A Wayland session: automation covers offscreen Qt and X11/Xvfb only.
+- FUSE-mounted launch on an Ubuntu 22.04 desktop (proven on the build host;
+  containers have no `/dev/fuse`).
+- Running the artifact on real hardware/distributions beyond the container.

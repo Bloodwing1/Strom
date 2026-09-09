@@ -2,7 +2,12 @@
 # clean-checkout smoke test. No provider secrets are used here.
 name: Tests
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # Called by .github/workflows/strom-appimage.yml so the AppImage release
+  # depends on these same blocking gates for the exact commit being built.
+  workflow_call:
 
 permissions:
   contents: read

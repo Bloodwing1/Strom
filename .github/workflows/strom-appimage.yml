@@ -1,0 +1,245 @@
+# AppImage build and release automation (AppImage guide, section 5).
+#
+# Trigger semantics:
+#   pull_request      -> reuse the blocking gates, build and verify the
+#                        AppImage, upload Actions artifacts; never publish.
+#   workflow_dispatch -> build-only preview on the selected ref; never
+#                        publishes anything.
+#   push of a v* tag  -> validate the tag against pyproject.toml, rebuild
+#                        with the gates for the same commit, then publish the
+#                        exact tested artifact as a GitHub Release (draft
+#                        first, published only after the round-trip check).
+#
+# The v* glob is only a trigger filter; the release job validates the tag
+# explicitly and never creates a missing tag (gh release --verify-tag).
+
+name: AppImage
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strom-appimage-${{ github.ref }}
+  # Superseded PR builds may be canceled; release work per tag never is.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Required gates (same commit)
+    uses: ./.github/workflows/strom-tests.yml
+    permissions:
+      contents: read
+
+  build:
+    name: Build and verify AppImage
+    needs: [checks]
+    # Pinned runner image (never an implicit ubuntu-latest compatibility
+    # promise): the baseline is enforced by build.sh's ELF audit and its
+    # Ubuntu 22.04 container test, regardless of the build host.
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out the exact commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12.8
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.8"
+
+      # desktop-file-utils validates the AppDir entry; libfuse2 enables the
+      # real FUSE-mount launch check; podman runs the Ubuntu 22.04 container
+      # verification (preinstalled on runner images, installed if absent).
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y desktop-file-utils libfuse2
+          command -v podman >/dev/null || \
+            sudo apt-get install --no-install-recommends -y podman
+
+      - name: Build, assemble, verify (staged AppRun, FUSE, extraction, Ubuntu 22.04)
+        run: packaging/appimage/build.sh
+
+      - name: Record artifact identity
+        id: identity
+        run: |
+          artifact="$(ls build-appimage/Strom-*.AppImage)"
+          echo "name=$(basename "$artifact")" >> "$GITHUB_OUTPUT"
+          sha256sum "$artifact" | cut -d' ' -f1 > build-appimage/artifact.sha256
+          echo "sha256=$(cut -d' ' -f1 build-appimage/artifact.sha256)" >> "$GITHUB_OUTPUT"
+
+      # Transport of the exact tested artifact to the release job; never a
+      # rebuild. The release job verifies checksums before publishing.
+      - name: Upload verified artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: strom-appimage-x86_64
+          path: |
+            build-appimage/Strom-*.AppImage
+            build-appimage/provenance.txt
+            build-appimage/artifact.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+    outputs:
+      artifact_name: ${{ steps.identity.outputs.name }}
+      artifact_sha256: ${{ steps.identity.outputs.sha256 }}
+
+  release:
+    name: Publish GitHub Release (tag push only)
+    # workflow_dispatch stays build-only by design; publication happens only
+    # for an actual v* tag push.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      TAG_NAME: ${{ github.ref_name }}
+      ASSET_NAME: ${{ needs.build.outputs.artifact_name }}
+      EXPECTED_SHA256: ${{ needs.build.outputs.artifact_sha256 }}
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12.8 (tomllib for tag validation)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12.8"
+
+      - name: Download the exact tested artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: strom-appimage-x86_64
+          path: stage
+
+      - name: Validate tag against pyproject.toml
+        run: |
+          set -euo pipefail
+          # The v* glob is only a trigger filter; validate for real. Prerelease
+          # tags (a/b/rc, PEP 440 style) are supported and marked; .dev and
+          # anything else is rejected with a clear message.
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+            echo "::error::Tag '$TAG_NAME' is not a supported version tag. Expected vMAJOR.MINOR.PATCH with an optional a/b/rc prerelease suffix." >&2
+            exit 1
+          fi
+          version="${TAG_NAME#v}"
+          pyproject_version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$version" != "$pyproject_version" ]; then
+            echo "::error::Tag '$TAG_NAME' does not match the pyproject.toml version '$pyproject_version' of the tagged commit." >&2
+            exit 1
+          fi
+          expected_name="Strom-$version-x86_64.AppImage"
+          if [ "$expected_name" != "$ASSET_NAME" ]; then
+            echo "::error::Built artifact '$ASSET_NAME' does not match the tag-derived asset name '$expected_name'." >&2
+            exit 1
+          fi
+          if [[ "$version" =~ (a|b|rc)[0-9]+$ ]]; then
+            echo "PRERELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "PRERELEASE=false" >> "$GITHUB_ENV"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Verify artifact checksum after transport
+        run: |
+          set -euo pipefail
+          cd stage
+          actual="$(sha256sum "$ASSET_NAME" | cut -d' ' -f1)"
+          recorded="$(cut -d' ' -f1 artifact.sha256)"
+          if [ "$actual" != "$EXPECTED_SHA256" ] || [ "$actual" != "$recorded" ]; then
+            echo "::error::Artifact checksum mismatch in transport (actual $actual, build-recorded $recorded, job output $EXPECTED_SHA256)." >&2
+            exit 1
+          fi
+
+      - name: Publish draft release with verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset="stage/$ASSET_NAME"
+          sums="stage/SHA256SUMS"
+
+          # Relative filename inside SHA256SUMS so `sha256sum -c SHA256SUMS`
+          # works directly in a plain download folder.
+          printf '%s  %s\n' "$(sha256sum "$asset" | cut -d' ' -f1)" "$ASSET_NAME" > "$sums"
+
+          notes="stage/release-notes.md"
+          {
+            echo "Self-contained Linux AppImage (x86_64) for Strom $VERSION."
+            echo
+            echo "Replaces a previous AppImage in place; settings and credentials"
+            echo "stay in the user configuration directory."
+            echo
+            echo "## Build provenance"
+            echo "```text"
+            cat stage/provenance.txt
+            echo "```"
+            echo
+            echo "## Verify the download"
+            echo "```sh"
+            echo "sha256sum -c SHA256SUMS"
+            echo "```"
+            if [ "$PRERELEASE" = "true" ]; then
+              echo
+              echo "**Pre-release**: this version is not final; expect changes."
+            fi
+          } > "$notes"
+
+          release_flags=()
+          if [ "$PRERELEASE" = "true" ]; then
+            release_flags+=(--prerelease)
+          fi
+
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+            if [ "$is_draft" != "true" ]; then
+              # A published release is immutable from here: an identical
+              # complete release makes this rerun a no-op; a differing
+              # published binary is never overwritten.
+              existing="$(mktemp -d)"
+              if gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
+                  --pattern "$ASSET_NAME" --dir "$existing" 2>/dev/null \
+                  && [ -f "$existing/$ASSET_NAME" ]; then
+                if [ "$(sha256sum "$existing/$ASSET_NAME" | cut -d' ' -f1)" \
+                    = "$(sha256sum "$asset" | cut -d' ' -f1)" ]; then
+                  echo "Release for $TAG_NAME is already published with the identical artifact; nothing to do."
+                  exit 0
+                fi
+                echo "::error::A published release for $TAG_NAME already exists with a different binary; refusing to overwrite it." >&2
+                exit 1
+              fi
+              echo "::error::A published release for $TAG_NAME exists but lacks the expected asset; refusing to modify a published release." >&2
+              exit 1
+            fi
+            # An incomplete draft may be resumed after the tag validation
+            # above; replace its stale same-name assets with this run's.
+            echo "Resuming existing draft release for $TAG_NAME."
+            gh release upload "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --clobber "$asset" "$sums"
+          else
+            # --verify-tag refuses to create a missing tag; the draft is
+            # published only after every asset is attached and verified.
+            echo "Creating draft release for $TAG_NAME."
+            gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "Strom $VERSION" --notes-file "$notes" "${release_flags[@]}"
+            gh release upload "$TAG_NAME" --repo "$GITHUB_REPOSITORY" "$asset" "$sums"
+          fi
+
+          # Round-trip verification of the uploaded assets, then publish.
+          verify="$(mktemp -d)"
+          gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET_NAME" --pattern "SHA256SUMS" --dir "$verify"
+          (cd "$verify" && sha256sum -c SHA256SUMS)
+          cmp "$verify/$ASSET_NAME" "$asset"
+          gh release edit "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          echo "Published release $TAG_NAME with $ASSET_NAME."

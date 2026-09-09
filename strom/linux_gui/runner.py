@@ -23,6 +23,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
+from strom.entry_switches import FROZEN_CLI_SWITCH
+
 _MAX_PENDING_CHARS = 16 * 1024
 _TRUNCATION_NOTICE = "[... line truncated after 16,384 characters ...]"
 
@@ -51,13 +53,45 @@ class LaunchSpec:
     config_dir: Path
 
 
-def make_launch_spec(config_dir: Path, horizon: int, log_level: str) -> LaunchSpec:
-    """Production launch specification: the current interpreter runs the CLI.
+def _is_frozen() -> bool:
+    """True inside a PyInstaller bundle, mounted as an AppImage or extracted.
 
-    Using ``sys.executable`` keeps the child in the same virtual environment
-    instead of a possibly unrelated ``strom``/``python`` found on PATH. A
-    frozen executable would need a different child-launch design.
+    Uses the packager's frozen-runtime indicator (``sys.frozen``, set by the
+    bootloader in both cases) instead of ``$APPIMAGE``, which is absent for
+    an extracted AppDir.
     """
+    return bool(getattr(sys, "frozen", False))
+
+
+def make_launch_spec(config_dir: Path, horizon: int, log_level: str) -> LaunchSpec:
+    """Production launch specification for one control-cycle child.
+
+    Source/pip execution runs ``python -u -m strom`` with the current
+    interpreter, keeping the child in the same environment instead of a
+    possibly unrelated ``strom``/``python`` from PATH.
+
+    Frozen execution (AppImage or extracted AppDir) re-launches the bundled
+    application with ``--strom-cli``; the packaged dispatcher strips that
+    switch and calls ``strom.cli.run``. A frozen executable is the
+    application, not a Python interpreter, so ``-u -m strom`` must never be
+    passed to it: that would open a second GUI instead of running the CLI.
+    Output flushing is ``-u`` in source mode and line-buffered streams in
+    frozen mode (the packaged entry point reconfigures them).
+    """
+    if _is_frozen():
+        return LaunchSpec(
+            program=sys.executable,
+            arguments=(
+                FROZEN_CLI_SWITCH,
+                "--config-dir",
+                str(config_dir),
+                "--horizon-hours",
+                str(horizon),
+                "--log-level",
+                log_level,
+            ),
+            config_dir=config_dir,
+        )
     return LaunchSpec(
         program=sys.executable,
         arguments=(

@@ -1,0 +1,10 @@
+#!/bin/sh
+# AppRun for the Strom AppImage/AppDir (AppImage guide, section 3).
+# Resolves its own directory, quotes every path, forwards "$@" and execs the
+# bundled executable. It must never invoke host python, pip, or a strom-gui
+# from PATH, and never depends on the working directory or a fixed mount
+# name. All settings stay in writable user storage (the GUI resolves the
+# configuration directory itself); this bundle is read-only application
+# content.
+here="$(dirname "$(readlink -f "$0")")"
+exec "$here/usr/bin/strom-gui" "$@"

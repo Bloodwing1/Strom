@@ -271,6 +271,55 @@ def test_make_launch_spec_shape():
     )
 
 
+def test_make_launch_spec_frozen_shape(monkeypatch):
+    """A frozen child re-launches the bundled app, never ``-u -m strom``.
+
+    ``-m strom`` handed to a frozen executable would open a second GUI, so
+    the frozen branch must route through the packaged CLI dispatcher. Paths
+    with spaces and accents must survive verbatim (they never touch a shell).
+    """
+    from strom.entry_switches import FROZEN_CLI_SWITCH
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    config_dir = Path("/tmp/Año de pruebas/config ñ")
+    spec = make_launch_spec(config_dir, horizon=12, log_level="DEBUG")
+
+    assert spec.program == sys.executable
+    assert spec.config_dir == config_dir
+    assert spec.arguments[0] == FROZEN_CLI_SWITCH
+    assert "-u" not in spec.arguments
+    assert "-m" not in spec.arguments and "strom" not in spec.arguments
+    # The product options follow the internal switch, unchanged, with the
+    # exact accented path preserved as one argument.
+    assert spec.arguments[1:] == (
+        "--config-dir",
+        str(config_dir),
+        "--horizon-hours",
+        "12",
+        "--log-level",
+        "DEBUG",
+    )
+
+
+def test_frozen_spec_appends_city_arguments_like_source_spec(monkeypatch):
+    """The window appends ``--city`` to whatever spec the factory returns.
+
+    The frozen branch must therefore keep the same trailing-argument shape,
+    so the existing window logic works without changes.
+    """
+    from dataclasses import replace
+
+    from strom.entry_switches import FROZEN_CLI_SWITCH
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    spec = make_launch_spec(Path("/tmp/cfg"), horizon=24, log_level="INFO")
+    city_spec = replace(spec, arguments=spec.arguments + ("--city", "Córdoba, ES"))
+
+    assert city_spec.program == sys.executable
+    assert city_spec.arguments[-2:] == ("--city", "Córdoba, ES")
+    assert city_spec.arguments[0] == FROZEN_CLI_SWITCH
+
+
 # --- output handling (plan §3 output rules; task 3) ---
 
 
