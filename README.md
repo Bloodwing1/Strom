@@ -82,8 +82,8 @@ A self-contained desktop build of Strom is published on the
 dependencies, so it runs on a plain Linux x86_64 desktop without Python, pip,
 or a source checkout.
 
-The current release is **0.3.0a1 (alpha)**:
-[Strom-0.3.0a1-x86_64.AppImage](https://github.com/Bloodwing1/Strom/releases/tag/v0.3.0a1).
+The current release is **0.3.1 (Strom Alpha, pre-release)**:
+[Strom-0.3.1-x86_64.AppImage](https://github.com/Bloodwing1/Strom/releases/tag/v0.3.1).
 It is marked as a pre-release — expect changes, and please report anything
 that misbehaves.
 
@@ -146,7 +146,7 @@ running AppImage:
   scheduled, or privileged updating; the transaction is integrity-checked
   against the release checksum, which detects corruption and mismatch but
   is not a release signature.
-- The first updater-enabled release (0.3.0a1) must still be installed
+- The first updater-enabled release (0.3.1) must still be installed
   manually: older releases cannot discover an updater they do not contain.
 
 ## Usage
