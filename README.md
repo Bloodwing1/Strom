@@ -1,12 +1,111 @@
-# Strom Project
+# Strom
 
 [![Unit Tests](https://github.com/Bloodwing1/Strom/actions/workflows/strom-tests.yml/badge.svg)](https://github.com/Bloodwing1/Strom/actions/workflows/strom-tests.yml)
 
-## Overview
+Strom is a free, open-source smart-heating controller. It uses weather
+forecasts and day-ahead electricity prices to compute a heating schedule with
+convex optimization, then switches a smart plug to follow it.
 
-Strom is a free, open-source script that brings smart heating to your home. It uses weather forecasts and electricity price data to fine-tune energy use, finding a cost-effective heating schedule through convex optimization. With a smart plug, Strom quietly takes care of the details, automatically adjusting your heating to save energy. It’s a simple, clever way to make your home more efficient and eco-friendly.
+There are two ways to run Strom, built on the same control code:
+
+| Way to run | What it is |
+| --- | --- |
+| **Strom Desktop (alpha)** | A self-contained Linux x86-64 AppImage with a native Qt interface and a built-in updater. No Python, pip, or source checkout needed. |
+| **Strom CLI** | The scriptable control cycle for servers, cron jobs, and development, installed from this repository with Python 3.12.8. |
+
+The desktop app is a front end for the CLI, not a second implementation. It
+runs the same control code in a child process.
 
 [Read the docs here](https://janbalanya.com/strom-docs/)
+
+---
+
+# Strom Desktop (alpha)
+
+Strom Desktop is the Linux desktop app, still early alpha. Get the latest
+AppImage from the
+[releases page](https://github.com/Bloodwing1/Strom/releases/latest). Expect
+changes, and please report anything that misbehaves.
+
+## Install with Gear Lever
+
+[Gear Lever](https://github.com/mijorus/gearlever) adds AppImages to your
+application menu and keeps them in one folder.
+
+1. Download `Strom-<version>-x86_64.AppImage` from the
+   [releases page](https://github.com/Bloodwing1/Strom/releases/latest).
+2. Install Gear Lever if you do not have it:
+
+   ```sh
+   flatpak install flathub it.mijorus.gearlever
+   ```
+
+3. Open Gear Lever and drag the AppImage into it, or run:
+
+   ```sh
+   flatpak run it.mijorus.gearlever --integrate ./Strom-<version>-x86_64.AppImage
+   ```
+
+Strom then shows up in your application menu. Keep the file somewhere you can
+write to, because Strom replaces it in place when it updates.
+
+You can also skip Gear Lever and run the AppImage directly:
+
+```sh
+chmod +x Strom-<version>-x86_64.AppImage
+./Strom-<version>-x86_64.AppImage
+```
+
+If FUSE is unavailable, add `--appimage-extract-and-run`.
+
+## Updating Strom Desktop
+
+Strom checks for a newer release when it starts and from **Help → Check for
+updates**, then replaces its own AppImage in place. Your settings stay in
+`~/.config/strom`. If the AppImage is not writable, Strom offers the release
+page for a manual download instead.
+
+## What Strom Desktop does
+
+- Four setup steps: language, weather, prices, plug. Each account has a
+  **Test** button that checks it for real. The plug account is optional and
+  folded away behind **Use the TP-Link account**; many plugs need no login,
+  and account details go only to the plug on your local network. Strom keeps
+  a derived key, never the password.
+- **Start heating** runs one control interval, about an hour. **Keep running
+  automatically** (on by default) starts the next run when the current one
+  finishes, and each run shows the heater on-time and estimated cost.
+- Closing the window during a run hides it to the system tray and notifies
+  you when it finishes. Without a tray, closing during a run is refused.
+  There is no Stop button.
+- Settings live in `~/.config/strom` and use the same files as the CLI, so
+  both can share one configuration directory. Environment variables override
+  the files, exactly as with the CLI.
+- Needs a Linux x86-64 desktop with X11 or Wayland; the AppImage is built
+  against Ubuntu 22.04. If Qt cannot load its platform plugin, clear custom
+  `QT_*` variables and check your distribution's desktop libraries.
+- Not included yet: scheduling, charts, house-parameter editing, device
+  discovery, manual on/off.
+
+## Running Strom Desktop from source
+
+Prefer the AppImage above. If you already have the Python package from the
+CLI installation, the same interface is available with the optional GUI
+extra:
+
+```sh
+pip install '.[gui]'
+strom-gui
+# or: python -m strom.linux_gui
+```
+
+This was verified against **PySide6 6.11.2**. It needs Python 3.12.8 and a
+working Qt 6 desktop environment (X11 or Wayland); a PySide6 wheel does not
+remove your distribution's shared library requirements.
+
+---
+
+# Strom CLI
 
 ## Requirements
 
@@ -41,9 +140,17 @@ Python (and Node for the git hooks) is provisioned automatically.
     pip install -e ".[dev]"
     ```
 
-4. Create a _config_ folder in the root project directory. This folder is where your personal api keys will be saved
-5. Place your electricity price and weather API keys in a "price_api_key.txt" "weather_api_key.txt" file that you create in the _config_ folder.
-6. Place your plug details in a "tapologin.env" file in the _config_ folder. `DEVICEIP` is required; `EMAIL` and `PASSWORD` are only needed when the plug requires a TP-Link account. Plugs that need no account work with just the address:
+4. Create a _config_ folder in the root project directory. This folder is
+   where your personal API keys will be saved.
+
+5. Place your electricity price and weather API keys in a
+   `price_api_key.txt` and `weather_api_key.txt` file that you create in the
+   _config_ folder.
+
+6. Place your plug details in a `tapologin.env` file in the _config_ folder.
+   `DEVICEIP` is required; `EMAIL` and `PASSWORD` are only needed when the
+   plug requires a TP-Link account. Plugs that need no account work with just
+   the address:
 
     ```env
     DEVICEIP=192.168.1.42
@@ -51,114 +158,40 @@ Python (and Node for the git hooks) is provisioned automatically.
     PASSWORD=myPassword12
     ```
 
-    After a successful run or GUI **Test**, Strom can also store a derived `PLUG_CONFIG` line instead of the account password.
+    A derived `PLUG_CONFIG` line can also be used instead of the account
+    password; the desktop app's **Test** button writes that line for you.
 
-6. You can optionally add your custom house heating parameters to a "house_config.json" file in the _config_ folder.
+7. You can optionally add your custom house heating parameters to a
+   `house_config.json` file in the _config_ folder:
 
-```json
-{
-    "C_air": 0.56,
-    "C_wall": 3.5,
-    "R_interior": 1.0,
-    "R_exterior": 6.06,
-    "Q_heater": 2.0,
-    "Q_cooling": 0.0,
-    "T_min": 18.0,
-    "T_max": 24.0,
-    "T_interior_init": 18.5,
-    "T_wall_init": 18.5,
-    "P_base": 0.01,
-    "freq": "1h"
-}
-```
+    ```json
+    {
+        "C_air": 0.56,
+        "C_wall": 3.5,
+        "R_interior": 1.0,
+        "R_exterior": 6.06,
+        "Q_heater": 2.0,
+        "Q_cooling": 0.0,
+        "T_min": 18.0,
+        "T_max": 24.0,
+        "T_interior_init": 18.5,
+        "T_wall_init": 18.5,
+        "P_base": 0.01,
+        "freq": "1h"
+    }
+    ```
 
- If the file is missing, the documented default parameters above are used.
- If the file is malformed or contains unknown keys, Strom fails fast with an
- actionable error instead of guessing.
-
-## AppImage for Linux (no Python needed)
-
-A self-contained desktop build of Strom is published on the
-[GitHub Releases page](https://github.com/Bloodwing1/Strom/releases) as
-`Strom-<version>-x86_64.AppImage`. It bundles Python, the GUI and all
-dependencies, so it runs on a plain Linux x86_64 desktop without Python, pip,
-or a source checkout.
-
-The current release is **0.3.3 (Strom Alpha, pre-release)**:
-[Strom-0.3.3-x86_64.AppImage](https://github.com/Bloodwing1/Strom/releases/tag/v0.3.3).
-It is marked as a pre-release — expect changes, and please report anything
-that misbehaves.
-
-1. Download `Strom-<version>-x86_64.AppImage` and `SHA256SUMS` from the
-   [release page](https://github.com/Bloodwing1/Strom/releases).
-2. Verify the download:
-
-   ```sh
-   sha256sum -c SHA256SUMS
-   ```
-
-3. Make it executable and run it:
-
-   ```sh
-   chmod +x Strom-<version>-x86_64.AppImage
-   ./Strom-<version>-x86_64.AppImage
-   ```
-
-If launching fails with a FUSE error, either install your distribution's
-libfuse2 package, or run without FUSE:
-
-```sh
-./Strom-<version>-x86_64.AppImage --appimage-extract-and-run
-```
-
-Replacing the AppImage with a newer release updates the application; your
-settings, keys, and credentials stay in the user configuration directory
-(`~/.config/strom` and the GUI's saved preferences), never inside the
-AppImage. The build is verified against an Ubuntu 22.04 (glibc 2.35)
-compatibility baseline, including an X11 smoke test; distributions with the
-standard desktop libraries (libglib, libdbus, libfontconfig, X11 or Wayland
-client libraries) are expected to work, but Strom does not promise automatic
-updates, automatic menu integration, or compatibility with every Linux
-distribution or architecture.
-
-### Updating from the GUI
-
-The desktop GUI can check for a newer release and install it over the
-running AppImage:
-
-- **Check for updates** lives in the application menu (Help) and is also
-  run once, silently, a few seconds after the window opens. Checks use
-  GitHub's public releases API (no credentials) and never send your
-  configuration anywhere.
-- Stable installations are offered stable releases; prerelease
-  installations (like the current 0.3.0 alpha) also see newer prereleases.
-  Downgrades are never offered.
-- On a writable AppImage installation, **Update and restart** downloads the
-  new AppImage, verifies it against the release's `SHA256SUMS`, runs the
-  bundled offline self-test, and replaces the running AppImage atomically;
-  the previous version is preserved beside the target until the new one is
-  confirmed. The new instance must report a successful start before the old
-  window closes, and a failed start restores the previous version
-  automatically. A heating cycle is never interrupted: installation is
-  unavailable while a cycle runs, and starting a cycle is blocked once an
-  update is accepted.
-- Source/pip installations, extracted AppDirs, read-only locations, and
-  unsupported architectures get an honest **Open release page** fallback
-  with manual installation steps instead. There is still no automatic,
-  scheduled, or privileged updating; the transaction is integrity-checked
-  against the release checksum, which detects corruption and mismatch but
-  is not a release signature.
-- The first updater-enabled release (0.3.1) must still be installed
-  manually: older releases cannot discover an updater they do not contain.
+    If the file is missing, the documented default parameters above are used.
+    If the file is malformed or contains unknown keys, Strom fails fast with
+    an actionable error instead of guessing.
 
 ## Usage
 
 [Technical documentation](https://janbalanya.com/strom-docs/)
 
 The `strom` CLI (also available as `python -m strom`) is the single supported
-entry point for the control logic. The optional desktop GUI (below) delegates
-every run to this same, unchanged code path — it is a convenient front end,
-not a separate implementation:
+entry point for the control logic. Strom Desktop delegates every run to this
+same, unchanged code path:
 
 ```sh
 strom --config-dir ./config --horizon-hours 24 --log-level INFO
@@ -171,156 +204,3 @@ The control policy executes a bounded duty cycle: the optimizer's fractional
 output for each interval is translated into an exact ON/OFF schedule for the
 smart plug, and an independent watchdog forces the plug off if it ever stays
 on too long.
-
-## Desktop GUI (Linux)
-
-An optional native desktop GUI built on Qt 6 Widgets (PySide6) is available.
-It was verified against **PySide6 6.11.2**; desktop acceptance testing on a
-real Linux X11/Wayland session is tracked separately, so offscreen test
-results should not be read as desktop verification.
-
-Install it on top of the normal installation:
-
-```sh
-pip install '.[gui]'
-```
-
-Then launch it from any directory with either of:
-
-```sh
-strom-gui
-python -m strom.linux_gui
-```
-
-Both launchers need Python 3.12.8 and a working Qt 6 desktop environment
-(X11 or Wayland); a PySide6 wheel does not remove your distribution's shared
-library requirements.
-
-### What the GUI does in this version
-
-- Check for and install Strom updates from the application menu (see
-  "Updating from the GUI" above); release checks are silent and never
-  interrupt setup or a running cycle. **About Strom** shows the version and
-  links to the release page.
-- Guide first-time users through setup with a four-step indicator
-  (**Location**, **Weather forecast**, **Electricity prices**, **Your smart
-  plug**) that ticks off completed steps; clicking a step jumps back to it.
-  Continue saves the current details; errors stay inline on the same screen.
-  Set up later opens the heating screen without starting anything. Each
-  account has a "How do I get this?" helper. Returning users resume at the
-  first missing account, or go straight to heating when all details are
-  available. **Manage accounts** reopens setup at the first incomplete step.
-- Choose English or Spanish from the header (available on every screen) and a
-  city or village on the first setup screen. Strom currently works in Spain;
-  more countries are coming. Choose a suggested city or type a place name,
-  which OpenWeatherMap resolves when a cycle runs. The GUI passes the selected
-  place with the ES country code to the CLI through `--city`; electricity
-  prices remain Spanish.
-- Paste-and-save setup: the weather key, the electricity price key, and the
-  plug endpoint (IP address, plus the Tapo email and password when the plug
-  needs them) can be typed directly into the window. Each account also has a
-  **Test** button that performs the real operation (one weather request, one
-  published-price query, one local plug connection) and reports "Works ✓" or
-  the reason it failed, so a typo is caught during setup instead of during an
-  hour-long run. Keys are tested from the field you just typed, or from the
-  saved file if the field is empty.
-- The plug account is optional. Many plugs need no TP-Link account: leave the
-  email and password empty, enter the IP address, and click **Test**. Strom
-  tries blank and default credentials first. When a plug does require the
-  account, the first successful **Test** stores a derived device
-  configuration (connection type plus a key hash) and drops the password, so
-  the TP-Link password is not kept on disk and the account is not needed
-  again unless the plug is reset.
-- Saving writes the exact files the CLI reads
-  (`weather_api_key.txt`, `price_api_key.txt`, `tapologin.env`) into the
-  selected folder — created automatically if needed — with mode 0600 so
-  other users on the machine cannot read them. Values are trimmed of
-  copy-paste whitespace; `tapologin.env` is round-trip verified with
-  python-dotenv's own parser before anything is written, so unusual
-  passwords are stored verbatim or not at all.
-- Show a readiness checklist with a chip per account (weather key / price key
-  / plug account) that updates as you save. **Start heating** stays disabled
-  until setup is complete, with a **Finish setup** button that opens the first
-  missing step, so a run cannot fail from missing configuration.
-- Select a configuration directory with the same file layout as the CLI
-  (`tapologin.env`, `price_api_key.txt`, `weather_api_key.txt`, optional
-  `house_config.json` — see Installation above); the folder is created on
-  demand if it does not exist yet.
-- Keep the heating screen focused on one decision: **Start heating for the
-  next hour**. The planning horizon (2–48 hours, default 24) and log detail
-  level (INFO/WARNING/ERROR) live under **More options**; the live log is
-  hidden until **Show technical details** is selected. The status line above
-  the button uses plain words (Ready, Working…, Done, Couldn't finish) and
-  shows elapsed time while a run is in progress.
-- **Keep running automatically** (on by default) starts the next run when the
-  current one finishes, so Strom keeps your home warm without hourly clicks; a
-  failed run stops automatic repeats and says so. A confirmation dialog states
-  that this operates the real smart plug and may switch your heater on for one
-  control interval (about one hour) before anything happens; Cancel is the
-  default.
-- When a run finishes, the window shows a short result: how long the heater
-  was on and the estimated cost, when the child reported it. With a system
-  tray available, closing the window while a run is active hides it to the
-  tray and notifies you when the run finishes; **Quit** from the tray waits
-  for the current run to finish before exiting. Without a tray, closing during
-  a run is refused as before.
-- Watch the cycle's output in a bounded, read-only activity log while it runs.
-
-### Configuration and environment precedence
-
-- The GUI starts the CLI with the selected directory exported as
-  `STROM_CONFIG_DIR` for that run; the CLI resolves the config path explicitly
-  and never depends on the directory the GUI was launched from.
-- Credentials and keys exported as environment variables (`DEVICEIP`,
-  `PLUG_CONFIG`, `EMAIL`, `PASSWORD`, `WEATHER_API_KEY`, and `PRICE_API_KEY`)
-  override values from `tapologin.env` and the corresponding key files,
-  exactly as with the CLI. `EMAIL` and `PASSWORD` are optional but must be
-  set together; `PLUG_CONFIG` (the derived device configuration) takes
-  precedence over them at connect time.
-- The GUI remembers the last used directory, city, language, horizon, log level,
-  automatic-repeat preference, and window geometry. The initial directory is
-  the saved path, then `STROM_CONFIG_DIR`, then `~/.config/strom`. Only
-  non-secret preferences are stored; API keys never enter the GUI's settings.
-
-### Long-running behavior and limitations
-
-- A run lasts one control interval (about an hour). With **Keep running
-  automatically** enabled, Strom starts the next run when the current one
-  finishes. A failed run stops automatic repeats and explains why.
-- With a system tray available, closing the window while a run is active
-  hides it to the tray; a notification reports the result, and **Quit** from
-  the tray waits for the current run to finish. Without a tray, closing while
-  a cycle is starting or running is refused with an explanation. The child
-  process is never killed or detached; the run button and form stay disabled
-  until the cycle exits. There is deliberately **no Stop/Force-quit** control
-  in this version: no silent process termination.
-- Only one run at a time; duplicate starts are prevented. The setup fields are
-  disabled while a run is in progress so files cannot change mid-cycle.
-- Not included in this version: house-parameter editing (`house_config.json`
-  must still be created by hand), charts, time-of-day scheduling, autostart,
-  device discovery, and manual ON/OFF control.
-
-### Linux troubleshooting
-
-- An error such as "xcb plugin found but could not load" usually means
-  missing system shared libraries or a mixed Qt installation — not a missing
-  Python import. Check Qt's Linux requirements for the libraries your
-  distribution needs.
-- Do not force `QT_QPA_PLATFORM=xcb` globally or overwrite Qt plugin paths.
-  To diagnose a plugin problem, run once with `QT_DEBUG_PLUGINS=1` and clear
-  any stray Qt environment settings instead of hard-coding a workaround.
-- On Wayland the GUI uses the Wayland platform plugin automatically.
-
-## Development
-
-- `mise run check` — lint, type-check and deterministic tests (what CI blocks on)
-- `mise run test-integration` — live provider canaries (needs API keys)
-- `mise run mutation` — mutation testing of the safety-critical modules
-
-Git hooks (via [husky](https://typicode.github.io/husky/)) run the linter on
-commit and the full check on push; enable them with `mise run hooks`.
-
-## Future Considerations
-
-- Cron job installer
-- Flatpak packaging (the AppImage release is the foundation)
