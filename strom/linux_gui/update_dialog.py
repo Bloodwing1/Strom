@@ -13,9 +13,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6 import QtGui, QtWidgets
-from PySide6.QtCore import Qt, QUrl
+from PySide6 import QtWidgets
+from PySide6.QtCore import Qt
 
+from strom.linux_gui.external import open_external_url, show_url_fallback
 from strom.linux_gui.update_service import UpdateCoordinator, UpdateState
 from strom.linux_gui.updates import RELEASES_PAGE_URL
 
@@ -190,7 +191,8 @@ class UpdateDialog(QtWidgets.QDialog):
         self.refresh()
 
     def _on_open_release_page(self) -> None:
-        QtGui.QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
+        if not open_external_url(RELEASES_PAGE_URL):
+            show_url_fallback(self, self._translate, RELEASES_PAGE_URL)
 
     def present(self) -> None:
         """Show and raise the dialog when the user asked for it."""

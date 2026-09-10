@@ -41,6 +41,6 @@ def run() -> int:
 
     from strom.linux_gui.window import MainWindow
 
-    window = MainWindow()
+    window = MainWindow(auto_update_check=True)
     window.show()
     return app.exec()

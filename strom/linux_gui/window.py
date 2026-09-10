@@ -27,8 +27,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QFileDialog
 
 from strom.linux_gui.runner import (
@@ -38,6 +36,7 @@ from strom.linux_gui.runner import (
     make_launch_spec,
 )
 from strom.linux_gui.setup_check import SetupChecker
+from strom.linux_gui.external import open_external_url, show_url_fallback
 from strom.linux_gui.setup_files import (
     PRICE_FILE,
     TAPO_FILE,
@@ -464,14 +463,20 @@ class MainWindow(QtWidgets.QMainWindow):
         page = QtWidgets.QWidget(parent)
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
 
         self._step_indicator = QtWidgets.QWidget(page)
         indicator_row = QtWidgets.QHBoxLayout(self._step_indicator)
         indicator_row.setContentsMargins(0, 0, 0, 0)
-        indicator_row.setSpacing(6)
+        indicator_row.setSpacing(8)
         self._step_buttons: list[QtWidgets.QPushButton] = []
         for index, name in enumerate(_STEP_SHORT_NAMES):
+            if index:
+                separator = QtWidgets.QLabel("›", self._step_indicator)
+                separator.setForegroundRole(
+                    QtGui.QPalette.ColorRole.PlaceholderText
+                )
+                indicator_row.addWidget(separator)
             button = QtWidgets.QPushButton(name, self._step_indicator)
             button.setFlat(True)
             button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
@@ -484,6 +489,11 @@ class MainWindow(QtWidgets.QMainWindow):
         indicator_row.addStretch(1)
         layout.addWidget(self._step_indicator)
 
+        rule = QtWidgets.QFrame(page)
+        rule.setFixedHeight(1)
+        rule.setStyleSheet("background-color: palette(mid);")
+        layout.addWidget(rule)
+
         self._account_pages = QtWidgets.QStackedWidget(page)
         for builder in (
             self._build_language_block, self._build_weather_block,
@@ -492,11 +502,31 @@ class MainWindow(QtWidgets.QMainWindow):
             step_page = QtWidgets.QWidget(page)
             page_layout = QtWidgets.QVBoxLayout(step_page)
             page_layout.setContentsMargins(0, 0, 0, 0)
-            page_layout.addWidget(builder(step_page))
+            card = QtWidgets.QFrame(step_page)
+            card.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+            card.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+            card.setAutoFillBackground(True)
+            card_palette = card.palette()
+            card_palette.setColor(
+                QtGui.QPalette.ColorRole.Window,
+                card_palette.color(QtGui.QPalette.ColorRole.Base),
+            )
+            card.setPalette(card_palette)
+            card_layout = QtWidgets.QVBoxLayout(card)
+            card_layout.setContentsMargins(22, 20, 22, 20)
+            card_layout.setSpacing(12)
+            card_layout.addWidget(builder(card))
+            page_layout.addWidget(card)
             page_layout.addStretch(1)
             self._account_pages.addWidget(step_page)
         layout.addWidget(self._account_pages)
+        layout.addStretch(1)
         navigation = QtWidgets.QHBoxLayout()
+        self._setup_later = QtWidgets.QPushButton("Set up later", page)
+        self._setup_later.setFlat(True)
+        self._setup_later.clicked.connect(self._finish_setup)
+        navigation.addWidget(self._setup_later)
+        navigation.addStretch(1)
         self._back_button = QtWidgets.QPushButton("Back", page)
         self._back_button.clicked.connect(lambda: self._show_step(
             self._account_pages.currentIndex() - 1
@@ -505,18 +535,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._next_button.setDefault(True)
         self._next_button.clicked.connect(self._continue_setup)
         navigation.addWidget(self._back_button)
-        navigation.addStretch(1)
+        navigation.addSpacing(8)
         navigation.addWidget(self._next_button)
         layout.addLayout(navigation)
-        self._setup_later = QtWidgets.QPushButton("Set up later", page)
-        self._setup_later.setFlat(True)
-        self._setup_later.clicked.connect(self._finish_setup)
-        layout.addWidget(self._setup_later)
         self._advanced_toggle = QtWidgets.QCheckBox("Advanced settings", page)
         layout.addWidget(self._advanced_toggle)
         advanced = self._advanced_settings = QtWidgets.QWidget(page)
         layout.addWidget(advanced)
-        layout.addStretch(1)
         self._advanced_toggle.toggled.connect(advanced.setVisible)
         advanced.hide()
         layout = QtWidgets.QVBoxLayout(advanced)
@@ -574,6 +599,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         fields[index].setFocus()
         self._sync_intro_visibility()
+        self._sync_step_indicator()
 
     def _sync_intro_visibility(self) -> None:
         """The intro paragraph is only useful before the language step."""
@@ -599,21 +625,22 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         # Save edits before leaving; a failed save keeps its inline error visible.
         if any(field.text() for field in fields[account_index]):
-            (self._on_save_weather, self._on_save_price, self._on_save_tapo)[account_index]()
-            if any(field.text() for field in fields[account_index]):
+            save = (self._on_save_weather, self._on_save_price,
+                    self._on_save_tapo)[account_index]
+            if not save():
                 return
         status = self._current_setup_status()
         ready = (status.weather_key_saved, status.price_key_saved, status.tapo_saved)
         if not ready[account_index]:
             chip = (self._weather_status, self._price_status,
                     self._tapo_status)[account_index]
-            self._set_chip(
-                chip,
-                self._translated(
+            if account_index == 2 and status.tapo_ip_saved:
+                message = "Click Test to verify the plug, then continue."
+            else:
+                message = (
                     "Add your details to continue, or choose Set up later."
-                ),
-                error=True,
-            )
+                )
+            self._set_chip(chip, self._translated(message), error=True)
             return
         self.save_settings()
         if index == 3:
@@ -645,7 +672,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return ready.index(False) + 1
 
     def _open_contribution_page(self) -> None:
-        QDesktopServices.openUrl(QUrl(_CONTRIBUTE_URL))
+        self._open_link(_CONTRIBUTE_URL)
+
+    def _open_link(self, url: str) -> None:
+        """Open an external page, with a copyable address as a fallback."""
+        if not open_external_url(url):
+            show_url_fallback(self, self._translated, url)
 
     def _build_language_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
         box = QtWidgets.QWidget(parent)
@@ -894,9 +926,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         hint = QtWidgets.QLabel(
-            "Many plugs need no account. Enter the IP address, leave the "
-            "email and password empty, and click Test; Strom only asks for "
-            "the account if your plug requires it.",
+            "Many plugs need no account. Enter the IP address and click Test.",
             box,
         )
         hint.setWordWrap(True)
@@ -905,13 +935,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         form = QtWidgets.QFormLayout()
         form.setSpacing(8)
-        self._tapo_email = QtWidgets.QLineEdit(box)
-        self._tapo_email.setAccessibleName("Plug account email")
-        form.addRow("Email", self._tapo_email)
-        self._tapo_password = QtWidgets.QLineEdit(box)
-        self._tapo_password.setAccessibleName("Plug account password")
-        self._tapo_password.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        form.addRow("Password", self._tapo_password)
         self._tapo_ip = QtWidgets.QLineEdit(box)
         self._tapo_ip.setAccessibleName("Plug IP address")
         self._tapo_ip.setToolTip(
@@ -920,9 +943,52 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow("IP address", self._tapo_ip)
         layout.addLayout(form)
 
+        self._account_toggle = QtWidgets.QToolButton(box)
+        self._account_toggle.setText("Use the TP-Link account")
+        self._account_toggle.setCheckable(True)
+        self._account_toggle.setAutoRaise(True)
+        self._account_toggle.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+        self._account_toggle.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self._account_toggle.toggled.connect(self._on_account_toggled)
+        layout.addWidget(self._account_toggle)
+
+        self._account_fields = QtWidgets.QWidget(box)
+        account_layout = QtWidgets.QVBoxLayout(self._account_fields)
+        account_layout.setContentsMargins(14, 0, 0, 0)
+        account_layout.setSpacing(8)
+        self._account_explanation = QtWidgets.QLabel(
+            "Only needed if the plug asks for it. Strom sends these to the "
+            "plug on your local network, never to TP-Link, and does not keep "
+            "the password: a successful Test stores a derived key instead.",
+            self._account_fields,
+        )
+        self._account_explanation.setWordWrap(True)
+        self._account_explanation.setForegroundRole(
+            QtGui.QPalette.ColorRole.PlaceholderText
+        )
+        account_layout.addWidget(self._account_explanation)
+        account_form = QtWidgets.QFormLayout()
+        account_form.setSpacing(8)
+        self._tapo_email = QtWidgets.QLineEdit(self._account_fields)
+        self._tapo_email.setAccessibleName("Plug account email")
+        account_form.addRow("Email", self._tapo_email)
+        self._tapo_password = QtWidgets.QLineEdit(self._account_fields)
+        self._tapo_password.setAccessibleName("Plug account password")
+        self._tapo_password.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        account_form.addRow("Password", self._tapo_password)
+        account_layout.addLayout(account_form)
+        self._account_fields.hide()
+        layout.addWidget(self._account_fields)
+
         buttons = QtWidgets.QHBoxLayout()
         buttons.addStretch(1)
         self._tapo_save = QtWidgets.QPushButton("Save", box)
+        self._tapo_save.setToolTip(
+            "Save the plug address. The account details are checked by Test "
+            "and never stored."
+        )
         self._tapo_save.clicked.connect(self._on_save_tapo)
         buttons.addWidget(self._tapo_save)
         self._tapo_test = QtWidgets.QPushButton("Test", box)
@@ -937,6 +1003,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tapo_status.setWordWrap(True)
         layout.addWidget(self._tapo_status)
         return box
+
+    def _on_account_toggled(self, checked: bool) -> None:
+        self._account_fields.setVisible(checked)
+        self._account_toggle.setArrowType(
+            QtCore.Qt.ArrowType.DownArrow
+            if checked
+            else QtCore.Qt.ArrowType.RightArrow
+        )
+        if checked:
+            self._tapo_email.setFocus()
 
     def _section_header(
         self,
@@ -953,6 +1029,8 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(heading)
         row.addStretch(1)
         button = QtWidgets.QPushButton("How do I get this?")
+        button.setFlat(True)
+        button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(
             lambda checked=False: self._show_help(help_text, url)
         )
@@ -1256,14 +1334,20 @@ class MainWindow(QtWidgets.QMainWindow):
         for chip, done in (
             (self._weather_status, status.weather_key_saved),
             (self._price_status, status.price_key_saved),
-            (self._tapo_status, status.tapo_saved),
         ):
             self._set_chip(
                 chip,
                 self._translated("Saved" if done else "Not set yet"),
             )
+        if status.tapo_saved:
+            tapo_text = "Saved"
+        elif status.tapo_ip_saved:
+            tapo_text = "Not verified yet"
+        else:
+            tapo_text = "Not set yet"
+        self._set_chip(self._tapo_status, self._translated(tapo_text))
         self._update_heating_chips(status)
-        self._update_step_indicator(status)
+        self._sync_step_indicator()
         self._refresh_controls()
 
     def _update_heating_chips(self, status: SetupStatus) -> None:
@@ -1285,18 +1369,32 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         self._chip_plug.setText(self._translated(plug_text))
 
-    def _update_step_indicator(self, status: SetupStatus) -> None:
+    def _sync_step_indicator(self) -> None:
+        """Color the stepper: the current step stands out, done steps tick."""
+        status = self._current_setup_status()
         done = (
             True,  # the language always has a value
             self._city_is_valid() and status.weather_key_saved,
             status.price_key_saved,
             status.tapo_saved,
         )
+        current = self._account_pages.currentIndex()
         for index, (button, name, complete) in enumerate(
-            zip(self._step_buttons, _STEP_SHORT_NAMES, done), start=1
+            zip(self._step_buttons, _STEP_SHORT_NAMES, done)
         ):
-            text = f"{index} {self._translated(name)}"
-            button.setText(f"{text} ✓" if complete else text)
+            text = f"{index + 1} {self._translated(name)}"
+            if complete and index != current:
+                button.setText(f"✓ {text}")
+            else:
+                button.setText(text)
+            font = button.font()
+            font.setBold(index == current)
+            button.setFont(font)
+            button.setForegroundRole(
+                QtGui.QPalette.ColorRole.WindowText
+                if index == current
+                else QtGui.QPalette.ColorRole.PlaceholderText
+            )
 
     def _set_chip(
         self, chip: QtWidgets.QLabel, text: str, *, error: bool = False
@@ -1346,11 +1444,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         return config_dir
 
-    def _on_save_weather(self) -> None:
+    def _on_save_weather(self) -> bool:
         chip = self._weather_status
         config_dir = self._prepared_dir_for_save(chip)
         if config_dir is None:
-            return
+            return False
         try:
             path = save_api_key(
                 config_dir, WEATHER_FILE, self._weather_key_edit.text(),
@@ -1358,7 +1456,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         except SetupError as exc:
             self._set_chip(chip, self._setup_error_text(exc), error=True)
-            return
+            return False
         except OSError as exc:
             self._set_chip(
                 chip,
@@ -1367,17 +1465,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 ).format(error=exc),
                 error=True,
             )
-            return
+            return False
         self._weather_key_edit.clear()
         self._set_chip(chip, self._translated("Saved"))
         self._append_log(f"Weather key saved to {path}")
         self._refresh_setup_status()
+        return True
 
-    def _on_save_price(self) -> None:
+    def _on_save_price(self) -> bool:
         chip = self._price_status
         config_dir = self._prepared_dir_for_save(chip)
         if config_dir is None:
-            return
+            return False
         try:
             path = save_api_key(
                 config_dir, PRICE_FILE, self._price_key_edit.text(),
@@ -1385,7 +1484,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         except SetupError as exc:
             self._set_chip(chip, self._setup_error_text(exc), error=True)
-            return
+            return False
         except OSError as exc:
             self._set_chip(
                 chip,
@@ -1394,43 +1493,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 ).format(error=exc),
                 error=True,
             )
-            return
+            return False
         self._price_key_edit.clear()
         self._set_chip(chip, self._translated("Saved"))
         self._append_log(f"Electricity price key saved to {path}")
         self._refresh_setup_status()
+        return True
 
-    def _on_save_tapo(self) -> None:
+    def _on_save_tapo(self) -> bool:
         chip = self._tapo_status
         config_dir = self._prepared_dir_for_save(chip)
         if config_dir is None:
-            return
+            return False
         stored = read_tapo_credentials(config_dir)
-        email = self._tapo_email.text().strip() or (
-            stored.email if stored else ""
-        )
-        password = self._tapo_password.text().strip() or (
-            stored.password if stored else ""
-        )
         device_ip = self._tapo_ip.text().strip() or (
             stored.device_ip if stored else ""
         )
-        # New account details supersede a derived configuration, since the
-        # account may have changed. Otherwise a stored proof is preserved.
-        plug_config = (
-            "" if (email or password) else (stored.plug_config if stored else "")
-        )
+        # The account is verified by Test, never written: a successful Test
+        # stores the derived proof and drops the password. Saving the
+        # address keeps any proof that is already there.
         try:
             path = save_tapo_credentials(
                 config_dir,
-                email,
-                password,
+                "",
+                "",
                 device_ip,
-                plug_config=plug_config,
+                plug_config=(stored.plug_config if stored else ""),
             )
         except SetupError as exc:
             self._set_chip(chip, self._setup_error_text(exc), error=True)
-            return
+            return False
         except OSError as exc:
             self._set_chip(
                 chip,
@@ -1439,13 +1531,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 ).format(error=exc),
                 error=True,
             )
-            return
-        self._tapo_email.clear()
-        self._tapo_password.clear()
+            return False
         self._tapo_ip.clear()
-        self._set_chip(chip, self._translated("Saved"))
-        self._append_log(f"Plug settings saved to {path}")
+        self._append_log(f"Plug address saved to {path}")
         self._refresh_setup_status()
+        return True
 
     # --- credential checks (test buttons) ---
 
@@ -1610,7 +1700,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.ButtonRole.ActionRole
             )
             open_button.clicked.connect(
-                lambda checked=False: QDesktopServices.openUrl(QUrl(url))
+                lambda checked=False: self._open_link(url)
             )
         ok_button = box.addButton(
             "OK", QtWidgets.QMessageBox.ButtonRole.AcceptRole
@@ -1864,7 +1954,7 @@ class MainWindow(QtWidgets.QMainWindow):
         box.setDefaultButton(ok_button)
         box.exec()
         if box.clickedButton() is page_button:
-            QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
+            self._open_link(RELEASES_PAGE_URL)
 
     # --- runner bindings ---
 
@@ -1921,6 +2011,12 @@ class MainWindow(QtWidgets.QMainWindow):
     # --- close behavior ---
 
     def closeEvent(self, event) -> None:
+        # A modal child (About, setup help) would otherwise keep the nested
+        # event loop alive while the main window hides, leaving a dialog
+        # floating over nothing.
+        for dialog in self.findChildren(QtWidgets.QDialog):
+            if dialog.isVisible() and dialog.isModal():
+                dialog.close()
         if self._runner.is_active():
             # Never touch the child: no waitForFinished, no kill, no detach.
             # With a tray the window hides and the run keeps going; without

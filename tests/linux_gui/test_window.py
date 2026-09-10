@@ -8,7 +8,6 @@ files; environment overrides are cleared per test so status chips stay
 deterministic.
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -17,7 +16,6 @@ import pytest
 pytest.importorskip("PySide6", reason="PySide6 is not installed (GUI extras missing)")
 pytest.importorskip("pytestqt", reason="pytest-qt is not installed (gui-dev extra missing)")
 
-from dotenv import load_dotenv  # noqa: E402
 from PySide6 import QtWidgets  # noqa: E402
 from PySide6.QtCore import QByteArray, QSettings  # noqa: E402
 
@@ -243,9 +241,7 @@ def test_save_price_key_writes_private_file(make_window, tmp_path):
     assert "price key saved to" in window._log.toPlainText()
 
 
-def test_save_tapo_credentials_roundtrip_special_characters(
-    make_window, tmp_path, monkeypatch
-):
+def test_saving_the_plug_never_stores_the_password(make_window, tmp_path):
     window = make_window()
     config_dir = tmp_path / "cfg"
     window._config_dir_edit.setText(str(config_dir))
@@ -258,12 +254,14 @@ def test_save_tapo_credentials_roundtrip_special_characters(
 
     path = config_dir / "tapologin.env"
     assert path.stat().st_mode & 0o777 == 0o600
-    assert window._tapo_status.text() == "Saved"
-    # Read the file back the way the CLI does and verify every value.
-    load_dotenv(path, override=True)
-    assert os.environ.pop("EMAIL") == "user@example.com"
-    assert os.environ.pop("PASSWORD") == password
-    assert os.environ.pop("DEVICEIP") == "192.168.1.42"
+    # The endpoint is saved, the account is used only by Test.
+    assert window._tapo_status.text() == "Not verified yet"
+    content = path.read_text()
+    assert "DEVICEIP" in content
+    assert password not in content
+    assert "PASSWORD" not in content
+    assert "EMAIL" not in content
+    assert window._tapo_password.text() == password  # kept for Test
     assert "smart plug account" not in window._checklist_label.text()
 
 
@@ -340,6 +338,16 @@ def test_checklist_turns_ready_after_all_saves(make_window, tmp_path):
     window._tapo_password.setText("secret")
     window._tapo_ip.setText("192.168.1.42")
     window._tapo_save.click()
+    assert "All set" not in window._checklist_label.text()
+
+    # A successful Test stores the derived proof; simulate it here.
+    from strom.linux_gui.setup_files import save_tapo_credentials
+
+    save_tapo_credentials(
+        config_dir, "", "", "192.168.1.42",
+        plug_config='{"host": "192.168.1.42", "credentials_hash": "abc"}',
+    )
+    window._refresh_setup_status()
 
     assert "All set" in window._checklist_label.text()
     assert window._weather_status.text() == "Saved"
@@ -864,6 +872,14 @@ def test_wizard_saves_and_moves_one_account_at_a_time(make_window, tmp_path):
     assert window._account_pages.currentIndex() == 3
     assert window._pages.currentIndex() == 0
     window._tapo_ip.setText("192.168.1.42")
+    # A successful Test stores the derived proof; simulate it here.
+    from strom.linux_gui.setup_files import save_tapo_credentials
+
+    save_tapo_credentials(
+        tmp_path / "accounts", "", "", "192.168.1.42",
+        plug_config='{"host": "192.168.1.42", "credentials_hash": "abc"}',
+    )
+    window._refresh_setup_status()
     window._next_button.click()
     assert window._pages.currentIndex() == 1
     assert window._runner.state is RunnerState.Idle
@@ -941,15 +957,33 @@ def test_language_first_step_and_spain_note(make_window, settings):
 
 
 def test_contribute_button_opens_the_repository(make_window, monkeypatch):
-    from PySide6.QtGui import QDesktopServices
+    import strom.linux_gui.window as window_module
 
     opened: list[str] = []
     monkeypatch.setattr(
-        QDesktopServices, "openUrl", lambda url: opened.append(url.toString())
+        window_module, "open_external_url", lambda url: opened.append(url) or True
     )
     window = make_window()
     window._contribute_button.click()
     assert opened == ["https://github.com/Bloodwing1/Strom"]
+
+
+def test_open_link_falls_back_to_a_copyable_address(make_window, monkeypatch):
+    import strom.linux_gui.window as window_module
+
+    shown: list[str] = []
+    monkeypatch.setattr(window_module, "open_external_url", lambda url: False)
+    monkeypatch.setattr(
+        window_module, "show_url_fallback",
+        lambda parent, translate, url: shown.append(url),
+    )
+    window = make_window()
+    window._open_link("https://example.com/release")
+    assert shown == ["https://example.com/release"]
+
+    monkeypatch.setattr(window_module, "open_external_url", lambda url: True)
+    window._open_link("https://example.com/release")
+    assert shown == ["https://example.com/release"]  # no second fallback
 
 
 def test_invalid_location_stays_in_setup(make_window):
@@ -1017,6 +1051,23 @@ def test_source_mode_offers_release_page_instead_of_install(qtbot, make_window):
 from strom.linux_gui.update_service import UpdateService  # noqa: E402
 from strom.linux_gui.update_service import ServiceConfig, UrlPolicy  # noqa: E402
 from PySide6.QtCore import QCoreApplication  # noqa: E402
+
+
+def test_update_dialog_release_page_uses_the_clean_opener(
+    qtbot, make_window, monkeypatch
+):
+    import strom.linux_gui.update_dialog as update_dialog_module
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        update_dialog_module, "open_external_url",
+        lambda url: opened.append(url) or True,
+    )
+    window = make_window()
+    window._check_updates_action.trigger()
+    dialog = window._update_dialog
+    dialog._page_button.click()
+    assert opened == ["https://github.com/Bloodwing1/Strom/releases"]
 
 
 def test_manual_check_failure_is_explained_in_dialog(
@@ -1335,7 +1386,7 @@ def test_plug_test_button_uses_saved_credentials(
     window._tapo_ip.setText("192.168.1.9")
 
     window._tapo_save.click()
-    assert window._tapo_status.text() == "Saved"
+    assert window._tapo_status.text() == "Not verified yet"
     window._on_test_tapo()
 
     qtbot.waitUntil(
@@ -1344,11 +1395,14 @@ def test_plug_test_button_uses_saved_credentials(
     assert seen[0].email == "user@example.com"
     assert seen[0].password == "secret"
     assert seen[0].device_ip == "192.168.1.9"
-    # The derived proof is stored and the password is dropped.
+    # The endpoint is saved, the derived proof is stored, and the password
+    # is never written.
     stored = (tmp_path / "tapologin.env").read_text()
+    assert "DEVICEIP=" in stored
     assert "PLUG_CONFIG=" in stored
     assert "PASSWORD=" not in stored
     assert "EMAIL=" not in stored
+    assert window._current_setup_status().tapo_verified
 
 
 def test_plug_test_without_account_persists_only_the_proof(
@@ -1391,6 +1445,52 @@ def test_plug_test_without_ip_asks_for_one(qtbot, make_window, tmp_path, monkeyp
     assert window._tapo_status.text() == "Enter the plug IP address first."
 
 
+def test_main_close_closes_an_open_modal_dialog(qtbot, make_window):
+    window = make_window()
+    window.show()
+    box = QtWidgets.QMessageBox(window)
+    box.setModal(True)
+    box.setText("modal")
+    box.addButton("OK", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+    box.show()
+    assert box.isVisible()
+
+    window.close()
+
+    assert not box.isVisible()
+    assert window.isHidden()
+
+
 def test_about_action_is_available(make_window):
     window = make_window()
     assert window._about_action.text() == "About Strom"
+
+
+def test_account_fields_are_folded_away_by_default(make_window):
+    window = make_window()
+    window.show()
+    window._open_setup()
+    window._show_step(3)
+    assert window._account_toggle.text() == "Use the TP-Link account"
+    assert not window._account_toggle.isChecked()
+    assert window._account_fields.isHidden()
+    assert not window._tapo_email.isVisibleTo(window)
+    assert not window._tapo_password.isVisibleTo(window)
+    assert window._tapo_ip.isVisibleTo(window)
+
+
+def test_account_toggle_reveals_the_privacy_explanation(make_window):
+    window = make_window()
+    window.show()
+    window._open_setup()
+    window._show_step(3)
+    window._account_toggle.setChecked(True)
+
+    assert not window._account_fields.isHidden()
+    assert window._tapo_email.isVisibleTo(window)
+    explanation = window._account_explanation.text()
+    assert "never to TP-Link" in explanation
+    assert "does not keep the password" in explanation
+
+    window._account_toggle.setChecked(False)
+    assert window._account_fields.isHidden()

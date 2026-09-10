@@ -345,13 +345,26 @@ SPANISH.update({
         "contraseña y vuelve a probar."
     ),
     (
-        "Many plugs need no account. Enter the IP address, leave the email "
-        "and password empty, and click Test; Strom only asks for the account "
-        "if your plug requires it."
+        "Many plugs need no account. Enter the IP address and click Test."
     ): (
-        "Muchos enchufes no necesitan cuenta. Introduce la dirección IP, deja "
-        "el correo y la contraseña vacíos y pulsa Probar; Strom solo pedirá "
-        "la cuenta si tu enchufe la necesita."
+        "Muchos enchufes no necesitan cuenta. Introduce la dirección IP y "
+        "pulsa Probar."
+    ),
+    ("Use the TP-Link account"): ("Usar la cuenta de TP-Link"),
+    (
+        "Only needed if the plug asks for it. Strom sends these to the plug "
+        "on your local network, never to TP-Link, and does not keep the "
+        "password: a successful Test stores a derived key instead."
+    ): (
+        "Solo se necesita si el enchufe la pide. Strom envía estos datos al "
+        "enchufe en tu red local, nunca a TP-Link, y no guarda la "
+        "contraseña: una prueba correcta guarda una clave derivada."
+    ),
+    "Not verified yet": "Sin verificar todavía",
+    (
+        "Click Test to verify the plug, then continue."
+    ): (
+        "Pulsa Probar para verificar el enchufe y continúa."
     ),
     (
         "Enter both the Tapo email and the password, or leave both empty and "
@@ -565,6 +578,12 @@ SPANISH.update({
 # Update dialogs, About and installation-capability reasons.
 SPANISH.update({
     "Contribute on GitHub": "Contribuye en GitHub",
+    "Open the link": "Abrir el enlace",
+    (
+        "Strom could not open your browser. Copy this address:"
+    ): (
+        "Strom no pudo abrir el navegador. Copia esta dirección:"
+    ),
     "City": "Ciudad",
     "Key": "Clave",
     "Email": "Correo",
