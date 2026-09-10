@@ -327,13 +327,11 @@ SPANISH.update({
         "Strom funciona actualmente en España. Pronto añadiremos más países."
     ),
     (
-        "What you'll need: a free OpenWeatherMap key, an ENTSO-E token "
-        "(it can take a day to arrive by email), and your Tapo email, "
-        "password and plug IP address."
+        "You'll need an OpenWeatherMap key, an ENTSO-E token, and your "
+        "Tapo account details."
     ): (
-        "Lo que necesitarás: una clave gratuita de OpenWeatherMap, un token "
-        "de ENTSO-E (puede tardar un día en llegar por correo) y tu correo, "
-        "contraseña y dirección IP del enchufe Tapo."
+        "Necesitarás una clave de OpenWeatherMap, un token de ENTSO-E y los "
+        "datos de tu cuenta Tapo."
     ),
     "Start heating for the next hour": "Empezar a calentar durante la próxima hora",
     "Start heating": "Empezar a calentar",
@@ -539,6 +537,14 @@ SPANISH.update({
 
 # Update dialogs, About and installation-capability reasons.
 SPANISH.update({
+    "Contribute on GitHub": "Contribuye en GitHub",
+    "City": "Ciudad",
+    "Key": "Clave",
+    "Email": "Correo",
+    "Password": "Contraseña",
+    "IP address": "Dirección IP",
+    "Save": "Guardar",
+    "Saved": "Guardado",
     "Open the release page": "Abrir la página de versiones",
     "{received} of {total} bytes downloaded": (
         "{received} de {total} bytes descargados"

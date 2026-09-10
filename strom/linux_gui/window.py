@@ -69,13 +69,8 @@ _LOG_MAX_BLOCKS = 2000
 _LOG_MIN_HEIGHT = 120
 _REPEAT_DELAY_MS = 2000
 _ELAPSED_TICK_MS = 30_000
-_STEP_NAMES = (
-    "Location",
-    "Weather forecast",
-    "Electricity prices",
-    "Your smart plug",
-)
-_STEP_SHORT_NAMES = ("Location", "Weather", "Prices", "Plug")
+_STEP_SHORT_NAMES = ("Language", "Weather", "Prices", "Plug")
+_CONTRIBUTE_URL = "https://github.com/Bloodwing1/Strom"
 _RUNNER_LABELS = {
     RunnerState.Idle: "Ready",
     RunnerState.Starting: "Starting…",
@@ -280,13 +275,6 @@ class MainWindow(QtWidgets.QMainWindow):
         title.setFont(font)
         header.addWidget(title)
         header.addStretch(1)
-        self._language_label = QtWidgets.QLabel("Language", column)
-        header.addWidget(self._language_label)
-        self._language = QtWidgets.QComboBox(column)
-        self._language.addItem("English", "en")
-        self._language.addItem("Español", "es")
-        self._language.setAccessibleName("Language")
-        header.addWidget(self._language)
         body.addLayout(header)
 
         self._intro_label = QtWidgets.QLabel(_INTRO_TEXT, column)
@@ -308,6 +296,9 @@ class MainWindow(QtWidgets.QMainWindow):
         heating.addStretch(1)
         self._pages.addWidget(self._heating_page)
         body.addWidget(self._pages, 1)
+        self._pages.currentChanged.connect(
+            lambda _index: self._sync_intro_visibility()
+        )
 
         self._setup_tray()
 
@@ -449,6 +440,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._status_label.setText(self._translated("Setup needed"))
 
     def _setup_complete(self) -> bool:
+        if not self._city_is_valid():
+            return False
         status = self._current_setup_status()
         return (
             status.weather_key_saved
@@ -474,7 +467,7 @@ class MainWindow(QtWidgets.QMainWindow):
         indicator_row.setContentsMargins(0, 0, 0, 0)
         indicator_row.setSpacing(6)
         self._step_buttons: list[QtWidgets.QPushButton] = []
-        for index, name in enumerate(_STEP_NAMES):
+        for index, name in enumerate(_STEP_SHORT_NAMES):
             button = QtWidgets.QPushButton(name, self._step_indicator)
             button.setFlat(True)
             button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
@@ -487,14 +480,9 @@ class MainWindow(QtWidgets.QMainWindow):
         indicator_row.addStretch(1)
         layout.addWidget(self._step_indicator)
 
-        self._step_label = QtWidgets.QLabel(page)
-        self._step_label.setAccessibleName("Setup progress")
-        self._step_label.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
-        layout.addWidget(self._step_label)
-
         self._account_pages = QtWidgets.QStackedWidget(page)
         for builder in (
-            self._build_location_block, self._build_weather_block,
+            self._build_language_block, self._build_weather_block,
             self._build_price_block, self._build_tapo_block
         ):
             step_page = QtWidgets.QWidget(page)
@@ -503,7 +491,7 @@ class MainWindow(QtWidgets.QMainWindow):
             page_layout.addWidget(builder(step_page))
             page_layout.addStretch(1)
             self._account_pages.addWidget(step_page)
-        layout.addWidget(self._account_pages, 1)
+        layout.addWidget(self._account_pages)
         navigation = QtWidgets.QHBoxLayout()
         self._back_button = QtWidgets.QPushButton("Back", page)
         self._back_button.clicked.connect(lambda: self._show_step(
@@ -524,6 +512,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(self._advanced_toggle)
         advanced = self._advanced_settings = QtWidgets.QWidget(page)
         layout.addWidget(advanced)
+        layout.addStretch(1)
         self._advanced_toggle.toggled.connect(advanced.setVisible)
         advanced.hide()
         layout = QtWidgets.QVBoxLayout(advanced)
@@ -565,13 +554,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_step(self, index: int) -> None:
         index = max(0, min(index, self._account_pages.count() - 1))
         self._account_pages.setCurrentIndex(index)
-        template = self._translated("Step {step} of 4 · {name}")
-        self._step_label.setText(
-            template.format(
-                step=index + 1,
-                name=self._translated(_STEP_NAMES[index]),
-            )
-        )
         self._back_button.setEnabled(index > 0 and not self._runner.is_active())
         self._next_button.setText(
             self._translated("Finish setup" if index == 3 else "Continue")
@@ -581,20 +563,29 @@ class MainWindow(QtWidgets.QMainWindow):
             index > 0 and self._advanced_toggle.isChecked()
         )
         fields = (
+            self._language,
             self._city,
-            self._weather_key_edit,
             self._price_key_edit,
             self._tapo_email,
         )
         fields[index].setFocus()
+        self._sync_intro_visibility()
+
+    def _sync_intro_visibility(self) -> None:
+        """The intro paragraph is only useful before the language step."""
+        self._intro_label.setVisible(
+            self._pages.currentIndex() == 1
+            or self._account_pages.currentIndex() == 0
+        )
 
     def _continue_setup(self) -> None:
         index = self._account_pages.currentIndex()
-        if not self._valid_location():
-            return
         if index == 0:
             self.save_settings()
             self._show_step(1)
+            return
+        if index == 1 and not self._valid_location():
+            self._refresh_setup_status()
             return
         account_index = index - 1
         fields = (
@@ -627,8 +618,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_step(index + 1)
 
     def _finish_setup(self) -> None:
-        if not self._valid_location():
-            return
         self._refresh_setup_status()
         self.save_settings()
         self._pages.setCurrentIndex(1)
@@ -640,7 +629,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _first_incomplete_step(self) -> int:
         if not self._city_is_valid():
-            return 0
+            return 1
         status = self._current_setup_status()
         ready = (
             status.weather_key_saved,
@@ -651,50 +640,39 @@ class MainWindow(QtWidgets.QMainWindow):
             return 0
         return ready.index(False) + 1
 
-    def _build_location_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+    def _open_contribution_page(self) -> None:
+        QDesktopServices.openUrl(QUrl(_CONTRIBUTE_URL))
+
+    def _build_language_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
         box = QtWidgets.QWidget(parent)
-        form = QtWidgets.QFormLayout(box)
-        note = QtWidgets.QLabel(
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        form = QtWidgets.QFormLayout()
+        self._language = QtWidgets.QComboBox(box)
+        self._language.addItem("English", "en")
+        self._language.addItem("Español", "es")
+        self._language.setAccessibleName("Language")
+        self._language_label = QtWidgets.QLabel("Language", box)
+        self._language_label.setBuddy(self._language)
+        form.addRow(self._language_label, self._language)
+        layout.addLayout(form)
+
+        self._spain_note = QtWidgets.QLabel(
             "Strom currently works in Spain. More countries are coming.", box
         )
-        note.setWordWrap(True)
-        note.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
-        form.addRow(note)
-        needs = QtWidgets.QLabel(
-            "What you'll need: a free OpenWeatherMap key, an ENTSO-E token "
-            "(it can take a day to arrive by email), and your Tapo email, "
-            "password and plug IP address.",
-            box,
+        self._spain_note.setWordWrap(True)
+        self._spain_note.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
+        layout.addWidget(self._spain_note)
+
+        self._contribute_button = QtWidgets.QPushButton(
+            "Contribute on GitHub", box
         )
-        needs.setWordWrap(True)
-        needs.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
-        form.addRow(needs)
-        self._city = QtWidgets.QComboBox(box)
-        self._city.setEditable(True)
-        self._city.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
-        self._city.addItems([
-            "Barcelona", "Madrid", "Valencia", "Sevilla", "Zaragoza", "Málaga",
-            "Murcia", "Palma", "Bilbao", "Alicante", "Córdoba", "Valladolid",
-            "Vigo", "Gijón", "A Coruña", "Granada", "Pamplona", "Santander",
-            "Toledo", "Cáceres", "Santiago de Compostela", "Las Palmas de Gran Canaria",
-            "Santa Cruz de Tenerife", "Ceuta", "Melilla",
-        ])
-        self._city.setAccessibleName("City or village in Spain")
-        city_editor = self._city.lineEdit()
-        city_completer = self._city.completer()
-        assert city_editor is not None and city_completer is not None
-        city_editor.setMaxLength(120)
-        city_editor.setPlaceholderText("Choose or type a city or village in Spain")
-        city_completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
-        form.addRow("City or village", self._city)
-        hint = QtWidgets.QLabel("Choose a suggestion or type your city or village in Spain.", box)
-        hint.setWordWrap(True)
-        form.addRow(hint)
-        self._location_error = QtWidgets.QLabel("", box)
-        self._location_error.setWordWrap(True)
-        self._location_error.setStyleSheet(f"color: {_ERROR_COLOR};")
-        form.addRow(self._location_error)
-        self._city.currentTextChanged.connect(self._update_location_note)
+        self._contribute_button.setToolTip(
+            "Open the Strom repository and help add support for your country."
+        )
+        self._contribute_button.clicked.connect(self._open_contribution_page)
+        layout.addWidget(self._contribute_button)
+        layout.addStretch(1)
         return box
 
     def _city_is_valid(self) -> bool:
@@ -752,7 +730,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.setProperty("sourceTitle", source)
                 widget.setTitle(self._translated(source))
             elif isinstance(widget, (QtWidgets.QLabel, QtWidgets.QAbstractButton)):
-                if widget in (self._step_label, self._next_button, self._location_note,
+                if widget in (self._next_button, self._location_note,
                               self._checklist_label, self._settings_folder_label,
                               self._weather_status, self._price_status, self._tapo_status,
                               self._chip_weather, self._chip_price, self._chip_plug,
@@ -787,103 +765,148 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_weather_block(
         self, parent: QtWidgets.QWidget
-    ) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox("Connect OpenWeatherMap", parent)
-        grid = QtWidgets.QGridLayout(box)
+    ) -> QtWidgets.QWidget:
+        box = QtWidgets.QWidget(parent)
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         self._weather_help_text = _WEATHER_HELP_TEXT
-        self._add_help_button(
-            box, grid, 0, self._weather_help_text, _WEATHER_SIGNUP_URL
+        self._section_header(
+            layout, "Connect OpenWeatherMap", self._weather_help_text,
+            _WEATHER_SIGNUP_URL,
         )
 
+        needs = QtWidgets.QLabel(
+            "You'll need an OpenWeatherMap key, an ENTSO-E token, and your "
+            "Tapo account details.",
+            box,
+        )
+        needs.setWordWrap(True)
+        needs.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
+        layout.addWidget(needs)
+
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(8)
+        self._city = QtWidgets.QComboBox(box)
+        self._city.setEditable(True)
+        self._city.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self._city.addItems([
+            "Barcelona", "Madrid", "Valencia", "Sevilla", "Zaragoza", "Málaga",
+            "Murcia", "Palma", "Bilbao", "Alicante", "Córdoba", "Valladolid",
+            "Vigo", "Gijón", "A Coruña", "Granada", "Pamplona", "Santander",
+            "Toledo", "Cáceres", "Santiago de Compostela", "Las Palmas de Gran Canaria",
+            "Santa Cruz de Tenerife", "Ceuta", "Melilla",
+        ])
+        self._city.setAccessibleName("City or village in Spain")
+        city_editor = self._city.lineEdit()
+        city_completer = self._city.completer()
+        assert city_editor is not None and city_completer is not None
+        city_editor.setMaxLength(120)
+        city_completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        form.addRow("City", self._city)
+        self._city.currentTextChanged.connect(self._update_location_note)
+        self._city.currentTextChanged.connect(self._refresh_setup_status)
+
+        key_row = QtWidgets.QHBoxLayout()
         self._weather_key_edit = QtWidgets.QLineEdit(box)
         self._weather_key_edit.setAccessibleName("Weather API key")
         self._weather_key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self._weather_key_edit.setToolTip(
             "Your key is hidden while typing; paste works normally."
         )
-        self._weather_key_edit.setPlaceholderText("Paste your weather key here")
-        grid.addWidget(self._weather_key_edit, 1, 0)
-
-        buttons = QtWidgets.QHBoxLayout()
-        self._weather_save = QtWidgets.QPushButton("Save weather key", box)
+        key_row.addWidget(self._weather_key_edit, 1)
+        self._weather_save = QtWidgets.QPushButton("Save", box)
         self._weather_save.clicked.connect(self._on_save_weather)
-        buttons.addWidget(self._weather_save)
+        key_row.addWidget(self._weather_save)
         self._weather_test = QtWidgets.QPushButton("Test", box)
         self._weather_test.setToolTip(
             "Ask OpenWeatherMap to check the key before you rely on it."
         )
         self._weather_test.clicked.connect(self._on_test_weather)
-        buttons.addWidget(self._weather_test)
-        grid.addLayout(buttons, 1, 1)
+        key_row.addWidget(self._weather_test)
+        form.addRow("Key", key_row)
+        layout.addLayout(form)
+
+        self._location_error = QtWidgets.QLabel("", box)
+        self._location_error.setWordWrap(True)
+        self._location_error.setStyleSheet(f"color: {_ERROR_COLOR};")
+        layout.addWidget(self._location_error)
 
         self._weather_status = QtWidgets.QLabel("", box)
         self._weather_status.setWordWrap(True)
-        grid.addWidget(self._weather_status, 2, 0, 1, 2)
-        grid.setColumnStretch(0, 1)
+        layout.addWidget(self._weather_status)
         return box
 
-    def _build_price_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox("Connect ENTSO-E", parent)
-        grid = QtWidgets.QGridLayout(box)
+    def _build_price_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        box = QtWidgets.QWidget(parent)
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         self._price_help_text = _PRICE_HELP_TEXT
-        self._add_help_button(
-            box, grid, 0, self._price_help_text, _PRICE_SIGNUP_URL
+        self._section_header(
+            layout, "Connect ENTSO-E", self._price_help_text, _PRICE_SIGNUP_URL,
         )
 
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(8)
+        key_row = QtWidgets.QHBoxLayout()
         self._price_key_edit = QtWidgets.QLineEdit(box)
         self._price_key_edit.setAccessibleName("Electricity price API key")
         self._price_key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self._price_key_edit.setToolTip(
             "Your key is hidden while typing; paste works normally."
         )
-        self._price_key_edit.setPlaceholderText("Paste your electricity price key here")
-        grid.addWidget(self._price_key_edit, 1, 0)
-
-        buttons = QtWidgets.QHBoxLayout()
-        self._price_save = QtWidgets.QPushButton("Save price key", box)
+        key_row.addWidget(self._price_key_edit, 1)
+        self._price_save = QtWidgets.QPushButton("Save", box)
         self._price_save.clicked.connect(self._on_save_price)
-        buttons.addWidget(self._price_save)
+        key_row.addWidget(self._price_save)
         self._price_test = QtWidgets.QPushButton("Test", box)
         self._price_test.setToolTip(
             "Ask ENTSO-E for recent prices to check the key."
         )
         self._price_test.clicked.connect(self._on_test_price)
-        buttons.addWidget(self._price_test)
-        grid.addLayout(buttons, 1, 1)
+        key_row.addWidget(self._price_test)
+        form.addRow("Key", key_row)
+        layout.addLayout(form)
 
         self._price_status = QtWidgets.QLabel("", box)
         self._price_status.setWordWrap(True)
-        grid.addWidget(self._price_status, 2, 0, 1, 2)
-        grid.setColumnStretch(0, 1)
+        layout.addWidget(self._price_status)
         return box
 
-    def _build_tapo_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox("Smart plug account (Tapo)", parent)
-        grid = QtWidgets.QGridLayout(box)
+    def _build_tapo_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        box = QtWidgets.QWidget(parent)
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         self._tapo_help_text = _TAPO_HELP_TEXT
-        self._add_help_button(box, grid, 0, self._tapo_help_text)
+        self._section_header(
+            layout, "Smart plug account (Tapo)", self._tapo_help_text
+        )
 
+        form = QtWidgets.QFormLayout()
+        form.setSpacing(8)
         self._tapo_email = QtWidgets.QLineEdit(box)
         self._tapo_email.setAccessibleName("Plug account email")
-        self._tapo_email.setPlaceholderText("Email used in the Tapo app")
-        grid.addWidget(self._tapo_email, 1, 0)
-
+        form.addRow("Email", self._tapo_email)
         self._tapo_password = QtWidgets.QLineEdit(box)
         self._tapo_password.setAccessibleName("Plug account password")
         self._tapo_password.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
-        self._tapo_password.setPlaceholderText("Tapo account password")
-        grid.addWidget(self._tapo_password, 2, 0)
-
+        form.addRow("Password", self._tapo_password)
         self._tapo_ip = QtWidgets.QLineEdit(box)
         self._tapo_ip.setAccessibleName("Plug IP address")
-        self._tapo_ip.setPlaceholderText("Plug IP address, e.g. 192.168.1.42")
-        grid.addWidget(self._tapo_ip, 3, 0)
+        self._tapo_ip.setToolTip(
+            "The Tapo app shows it under the plug's device information."
+        )
+        form.addRow("IP address", self._tapo_ip)
+        layout.addLayout(form)
 
         buttons = QtWidgets.QHBoxLayout()
-        self._tapo_save = QtWidgets.QPushButton("Save plug details", box)
+        buttons.addStretch(1)
+        self._tapo_save = QtWidgets.QPushButton("Save", box)
         self._tapo_save.clicked.connect(self._on_save_tapo)
         buttons.addWidget(self._tapo_save)
         self._tapo_test = QtWidgets.QPushButton("Test", box)
@@ -892,35 +915,33 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._tapo_test.clicked.connect(self._on_test_tapo)
         buttons.addWidget(self._tapo_test)
-        grid.addLayout(buttons, 4, 0, 1, 2)
+        layout.addLayout(buttons)
 
         self._tapo_status = QtWidgets.QLabel("", box)
         self._tapo_status.setWordWrap(True)
-        grid.addWidget(self._tapo_status, 5, 0, 1, 2)
-        grid.setColumnStretch(0, 1)
+        layout.addWidget(self._tapo_status)
         return box
 
-    def _add_help_button(
+    def _section_header(
         self,
-        box: QtWidgets.QGroupBox,
-        grid: QtWidgets.QGridLayout,
-        row: int,
+        layout: QtWidgets.QVBoxLayout,
+        title: str,
         help_text: str,
         url: str | None = None,
     ) -> None:
-        descriptions = {
-            _WEATHER_HELP_TEXT: "Add a weather key so Strom can plan for colder hours.",
-            _PRICE_HELP_TEXT: "Add a price key so Strom can find cheaper hours.",
-            _TAPO_HELP_TEXT: "Connect the Tapo plug that your heater uses.",
-        }
-        label = QtWidgets.QLabel(descriptions.get(help_text, ""), box)
-        label.setWordWrap(True)
-        grid.addWidget(label, row, 0)
-        button = QtWidgets.QPushButton("How do I get this?", box)
+        row = QtWidgets.QHBoxLayout()
+        heading = QtWidgets.QLabel(title)
+        font = heading.font()
+        font.setBold(True)
+        heading.setFont(font)
+        row.addWidget(heading)
+        row.addStretch(1)
+        button = QtWidgets.QPushButton("How do I get this?")
         button.clicked.connect(
             lambda checked=False: self._show_help(help_text, url)
         )
-        grid.addWidget(button, row, 1)
+        row.addWidget(button)
+        layout.addLayout(row)
 
     def _build_run_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Your heating", parent)
@@ -1151,10 +1172,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sync_custom_folder_toggle()
         status = self._current_setup_status()
         ready = (status.weather_key_saved, status.price_key_saved, status.tapo_saved)
-        if all(ready):
+        if all(ready) and self._city_is_valid():
             self._pages.setCurrentIndex(1)
         else:
-            self._show_step(ready.index(False) + 1 if any(ready) else 0)
+            self._show_step(self._first_incomplete_step())
 
     def save_settings(self) -> None:
         """Persist non-secret UI preferences; called when a run is accepted."""
@@ -1223,7 +1244,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             self._set_chip(
                 chip,
-                self._translated("Saved, not tested" if done else "Not set yet"),
+                self._translated("Saved" if done else "Not set yet"),
             )
         self._update_heating_chips(status)
         self._update_step_indicator(status)
@@ -1245,8 +1266,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_step_indicator(self, status: SetupStatus) -> None:
         done = (
-            self._city_is_valid(),
-            status.weather_key_saved,
+            True,  # the language always has a value
+            self._city_is_valid() and status.weather_key_saved,
             status.price_key_saved,
             status.tapo_saved,
         )

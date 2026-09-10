@@ -180,9 +180,9 @@ def test_setup_pane_offers_paste_and_save(make_window):
     assert window._weather_key_edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
     assert window._price_key_edit.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
     assert window._tapo_password.echoMode() == QtWidgets.QLineEdit.EchoMode.Password
-    assert window._weather_save.text() == "Save weather key"
-    assert window._price_save.text() == "Save price key"
-    assert window._tapo_save.text() == "Save plug details"
+    assert window._weather_save.text() == "Save"
+    assert window._price_save.text() == "Save"
+    assert window._tapo_save.text() == "Save"
     assert window._weather_key_edit.accessibleName() == "Weather API key"
     assert window._price_key_edit.accessibleName() == "Electricity price API key"
     assert window._tapo_ip.accessibleName() == "Plug IP address"
@@ -222,7 +222,7 @@ def test_save_weather_key_writes_private_file(qtbot, make_window, tmp_path):
     path = config_dir / "weather_api_key.txt"
     assert path.read_text() == "abc123-key\n"
     assert path.stat().st_mode & 0o777 == 0o600
-    assert window._weather_status.text() == "Saved, not tested"
+    assert window._weather_status.text() == "Saved"
     assert window._weather_key_edit.text() == ""  # cleared after save
     assert "Weather key saved to" in window._log.toPlainText()
     assert "weather key" not in window._checklist_label.text()
@@ -239,7 +239,7 @@ def test_save_price_key_writes_private_file(make_window, tmp_path):
     path = config_dir / "price_api_key.txt"
     assert path.read_text() == "token-456\n"
     assert path.stat().st_mode & 0o777 == 0o600
-    assert window._price_status.text() == "Saved, not tested"
+    assert window._price_status.text() == "Saved"
     assert "price key saved to" in window._log.toPlainText()
 
 
@@ -258,7 +258,7 @@ def test_save_tapo_credentials_roundtrip_special_characters(
 
     path = config_dir / "tapologin.env"
     assert path.stat().st_mode & 0o777 == 0o600
-    assert window._tapo_status.text() == "Saved, not tested"
+    assert window._tapo_status.text() == "Saved"
     # Read the file back the way the CLI does and verify every value.
     load_dotenv(path, override=True)
     assert os.environ.pop("EMAIL") == "user@example.com"
@@ -280,7 +280,7 @@ def test_save_tapo_rejects_bad_ip_without_writing(make_window, tmp_path):
 
     assert not (config_dir / "tapologin.env").exists()
     assert "IP address" in window._tapo_status.text()
-    assert window._tapo_status.text() != "Saved, not tested"
+    assert window._tapo_status.text() != "Saved"
 
 
 def test_save_with_blank_value_shows_guidance(make_window, tmp_path):
@@ -342,9 +342,9 @@ def test_checklist_turns_ready_after_all_saves(make_window, tmp_path):
     window._tapo_save.click()
 
     assert "All set" in window._checklist_label.text()
-    assert window._weather_status.text() == "Saved, not tested"
-    assert window._price_status.text() == "Saved, not tested"
-    assert window._tapo_status.text() == "Saved, not tested"
+    assert window._weather_status.text() == "Saved"
+    assert window._price_status.text() == "Saved"
+    assert window._tapo_status.text() == "Saved"
 
 
 def test_environment_overrides_count_as_saved(make_window, monkeypatch):
@@ -356,9 +356,9 @@ def test_environment_overrides_count_as_saved(make_window, monkeypatch):
 
     window = make_window()
 
-    assert window._weather_status.text() == "Saved, not tested"
-    assert window._price_status.text() == "Saved, not tested"
-    assert window._tapo_status.text() == "Saved, not tested"
+    assert window._weather_status.text() == "Saved"
+    assert window._price_status.text() == "Saved"
+    assert window._tapo_status.text() == "Saved"
     assert "All set" in window._checklist_label.text()
 
 
@@ -903,30 +903,36 @@ def test_wizard_keeps_unsaved_replacement_on_save_failure(make_window, tmp_path)
     assert (tmp_path / "accounts" / "weather_api_key.txt").read_text() == "original\n"
 
 
-def test_location_and_language_first_step(make_window, settings):
+def test_language_first_step_and_spain_note(make_window, settings):
     window = make_window()
     assert window._account_pages.currentIndex() == 0
-    assert window._account_pages.currentWidget().isAncestorOf(window._city)
     first_page = window._account_pages.currentWidget()
-    # Language lives in the header so it is reachable from every screen.
-    assert not first_page.isAncestorOf(window._language)
-    assert window.isAncestorOf(window._language)
+    # The first screen is the language, the Spain note and the contribution
+    # link, nothing else.
+    assert first_page.isAncestorOf(window._language)
+    assert first_page.isAncestorOf(window._spain_note)
+    assert first_page.isAncestorOf(window._contribute_button)
+    assert not first_page.isAncestorOf(window._city)
     assert not first_page.isAncestorOf(window._weather_key_edit)
+    assert "Spain" in window._spain_note.text()
+    assert window._contribute_button.text() == "Contribute on GitHub"
     assert window._advanced_toggle.isHidden()
     assert window._advanced_settings.isHidden()
     assert window._account_pages.count() == 4
+
     window._city.setCurrentText("Albarracín")
     window._language.setCurrentIndex(1)
     assert window._next_button.text() == "Continuar"
     assert "Albarracín" in window._location_note.text()
     window._next_button.click()
     assert window._account_pages.currentIndex() == 1
-    assert window._account_pages.currentWidget().isAncestorOf(window._weather_key_edit)
+    current = window._account_pages.currentWidget()
+    assert current.isAncestorOf(window._city)
+    assert current.isAncestorOf(window._weather_key_edit)
     assert not window._advanced_toggle.isHidden()
     window._advanced_toggle.setChecked(True)
     window._back_button.click()
     assert window._advanced_settings.isHidden()
-    assert "Paso 1 de 4" in window._step_label.text()
     restored = make_window()
     assert restored._city.currentText() == "Albarracín"
     assert restored._language.currentData() == "es"
@@ -934,15 +940,29 @@ def test_location_and_language_first_step(make_window, settings):
     assert restored._next_button.text() == "Continue"
 
 
+def test_contribute_button_opens_the_repository(make_window, monkeypatch):
+    from PySide6.QtGui import QDesktopServices
+
+    opened: list[str] = []
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", lambda url: opened.append(url.toString())
+    )
+    window = make_window()
+    window._contribute_button.click()
+    assert opened == ["https://github.com/Bloodwing1/Strom"]
+
+
 def test_invalid_location_stays_in_setup(make_window):
     window = make_window()
+    window._open_setup()
+    window._next_button.click()  # language -> weather
+    assert window._account_pages.currentIndex() == 1
     for city in ("", "  ", "Paris, FR"):
         window._city.setCurrentText(city)
         window._next_button.click()
-        assert window._account_pages.currentIndex() == 0
-        window._finish_setup()
-        assert window._pages.currentIndex() == 0
+        assert window._account_pages.currentIndex() == 1
         assert window._location_error.text()
+    assert not window._setup_complete()
 
 
 def test_selected_location_passed_to_production_child(make_window, monkeypatch, tmp_path):
@@ -1313,7 +1333,7 @@ def test_plug_test_button_uses_saved_credentials(
     window._tapo_ip.setText("192.168.1.9")
 
     window._tapo_save.click()
-    assert window._tapo_status.text() == "Saved, not tested"
+    assert window._tapo_status.text() == "Saved"
     window._on_test_tapo()
 
     qtbot.waitUntil(
