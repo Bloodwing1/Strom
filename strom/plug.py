@@ -1,8 +1,7 @@
 """Smart-plug connection policy shared by the CLI and the GUI.
 
-The policy prefers the strongest credential available and falls back to a
-credential-less attempt, so plugs that need no TP-Link account are used
-without one:
+The policy picks the strongest credential available, without retrying a
+weaker one when the chosen attempt fails:
 
 1. a stored device configuration (connection type plus the derived
    credentials hash captured after an earlier successful login);
@@ -11,8 +10,10 @@ without one:
    and blank credentials. This succeeds for plugs never bound to the
    TP-Link cloud and for older Kasa devices.
 
-The TP-Link account is only ever used on the local network: it is the seed
-for the device's local authentication hash, never a cloud login.
+The chosen attempt's failure propagates to the caller, which decides what
+to try next: the GUI asks for the account when a credential-less attempt is
+refused. The TP-Link account is only ever used on the local network: it is
+the seed for the device's local authentication hash, never a cloud login.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from dataclasses import dataclass, replace
 
 @dataclass(frozen=True)
 class PlugCredentials:
-    """Everything needed to reach one plug, in preference order.
+    """Everything needed to reach one plug; :func:`connect_plug` picks.
 
     ``plug_config`` is the JSON device configuration captured after a
     successful login, including the derived credentials hash. ``email`` and
@@ -40,6 +41,8 @@ class PlugCredentials:
 async def connect_plug(credentials: PlugCredentials):
     """Connect to the plug and return the python-kasa device.
 
+    Exactly one credential path is used: the stored configuration when
+    present, else the account, else none. A failure propagates unchanged.
     The caller owns the returned device and must close it.
     """
     from kasa import Device, DeviceConfig, Discover

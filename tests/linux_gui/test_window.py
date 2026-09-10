@@ -1285,9 +1285,9 @@ def test_run_summary_handles_a_missing_report(make_window):
 
 
 def test_repeat_starts_the_next_run(qtbot, make_window, monkeypatch):
-    import strom.linux_gui.window as window_module
+    import strom.linux_gui.run_pane as run_pane
 
-    monkeypatch.setattr(window_module, "_REPEAT_DELAY_MS", 20)
+    monkeypatch.setattr(run_pane, "_REPEAT_DELAY_MS", 20)
     record = []
     window = make_window(spec_factory=child_factory("success.py", record))
     assert window._repeat_checkbox.isChecked()  # on by default
@@ -1428,6 +1428,32 @@ def test_plug_test_without_account_persists_only_the_proof(
     assert window._updater  # window still usable
     status = window._current_setup_status()
     assert status.tapo_verified
+
+
+def test_plug_test_keeps_a_save_failure_visible(
+    qtbot, make_window, tmp_path, monkeypatch
+):
+    import strom.linux_gui.setup_check as setup_check
+
+    monkeypatch.setattr(
+        setup_check, "check_plug_credentials",
+        lambda credentials: '{"host": "192.168.1.9", "credentials_hash": "abc"}',
+    )
+    window = make_window()
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("x")
+    window._config_dir_edit.setText(str(blocker))
+    window._tapo_ip.setText("192.168.1.9")
+
+    window._on_test_tapo()
+
+    qtbot.waitUntil(
+        lambda: window._tapo_status.text() != "Testing…", timeout=5000
+    )
+    # The connection worked, but the proof could not be stored: the error
+    # must not be replaced by the success chip.
+    assert "not a folder" in window._tapo_status.text()
+    assert not window._current_setup_status().tapo_verified
 
 
 def test_plug_test_without_ip_asks_for_one(qtbot, make_window, tmp_path, monkeypatch):
