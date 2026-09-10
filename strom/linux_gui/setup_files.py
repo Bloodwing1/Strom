@@ -46,6 +46,7 @@ TAPO_FILE = "tapologin.env"
 ENV_WEATHER_KEY = "WEATHER_API_KEY"
 ENV_PRICE_KEY = "PRICE_API_KEY"
 TAPO_ENV_KEYS = ("EMAIL", "PASSWORD", "DEVICEIP")
+PLUG_CONFIG_KEY = "PLUG_CONFIG"
 
 
 class SetupError(Exception):
@@ -69,11 +70,29 @@ class SetupError(Exception):
 
 @dataclass(frozen=True)
 class SetupStatus:
-    """What the GUI shows as done/missing for the selected directory."""
+    """What the GUI shows as done/missing for the selected directory.
+
+    ``tapo_saved`` means the plug can be used: its IP is set plus either a
+    stored derived configuration or the account credentials.
+    ``tapo_verified`` means a derived configuration from a successful login
+    is stored, so the account is no longer needed.
+    """
 
     weather_key_saved: bool
     price_key_saved: bool
     tapo_saved: bool
+    tapo_verified: bool = False
+    tapo_ip_saved: bool = False
+
+
+@dataclass(frozen=True)
+class TapoCredentials:
+    """Everything stored for the plug, in the same shape the CLI reads."""
+
+    device_ip: str = ""
+    email: str = ""
+    password: str = ""
+    plug_config: str = ""
 
 
 def _non_blank(value: str, what: str) -> str:
@@ -166,7 +185,7 @@ def _env_line(key: str, value: str) -> str:
     return f"{key}={_quote_env_value(value)}\n"
 
 
-def _render_tapo_env(email: str, password: str, device_ip: str) -> str:
+def _render_tapo_env(entries: list[tuple[str, str]]) -> str:
     """Render the file content and prove it round-trips before writing.
 
     Whatever encoding the lines use, the finished content is parsed back
@@ -178,7 +197,6 @@ def _render_tapo_env(email: str, password: str, device_ip: str) -> str:
     back correctly, nothing is written and a clear error is shown instead
     of silently corrupting credentials.
     """
-    entries = [("EMAIL", email), ("PASSWORD", password), ("DEVICEIP", device_ip)]
 
     def render(order: list[tuple[str, str]]) -> str:
         return "".join(_env_line(key, value) for key, value in order)
@@ -208,11 +226,20 @@ def _render_tapo_env(email: str, password: str, device_ip: str) -> str:
 
 
 def save_tapo_credentials(
-    config_dir: Path, email: str, password: str, device_ip: str
+    config_dir: Path,
+    email: str,
+    password: str,
+    device_ip: str,
+    *,
+    plug_config: str = "",
 ) -> Path:
-    """Save the plug account to ``tapologin.env`` with verified quoting."""
-    cleaned_email = _non_blank(email, "plug account email")
-    cleaned_password = _non_blank(password, "plug account password")
+    """Save the plug endpoint and the best available proof.
+
+    Both account fields together store the account credentials and drop
+    any derived configuration, since the account may have changed. A
+    derived configuration on its own is stored instead of the account
+    fields, so the TP-Link password is no longer kept on disk.
+    """
     cleaned_ip = _non_blank(device_ip, "plug IP address")
     try:
         ipaddress.ip_address(cleaned_ip)
@@ -223,7 +250,25 @@ def save_tapo_credentials(
             code="bad_ip",
             params={"value": cleaned_ip},
         ) from None
-    content = _render_tapo_env(cleaned_email, cleaned_password, cleaned_ip)
+    cleaned_email = email.strip()
+    cleaned_password = password.strip()
+    if bool(cleaned_email) != bool(cleaned_password):
+        raise SetupError(
+            "Enter both the Tapo email and the password, or leave both "
+            "empty and test the plug without an account.",
+            code="credentials_together",
+        )
+    if cleaned_email:
+        entries = [
+            ("EMAIL", _non_blank(email, "plug account email")),
+            ("PASSWORD", _non_blank(password, "plug account password")),
+            ("DEVICEIP", cleaned_ip),
+        ]
+    elif plug_config:
+        entries = [("DEVICEIP", cleaned_ip), (PLUG_CONFIG_KEY, plug_config)]
+    else:
+        entries = [("DEVICEIP", cleaned_ip)]
+    content = _render_tapo_env(entries)
     config_dir.mkdir(parents=True, exist_ok=True)
     path = config_dir / TAPO_FILE
     _write_secret_file(path, content)
@@ -237,8 +282,13 @@ def _file_has_content(path: Path) -> bool:
         return False
 
 
-def _env_credentials_complete() -> bool:
-    return all(os.getenv(name, "").strip() for name in TAPO_ENV_KEYS)
+def _env_tapo_saved() -> bool:
+    """True when exported variables fully configure the plug."""
+    device_ip = os.getenv("DEVICEIP", "").strip()
+    plug_config = os.getenv(PLUG_CONFIG_KEY, "").strip()
+    email = os.getenv("EMAIL", "").strip()
+    password = os.getenv("PASSWORD", "").strip()
+    return bool(device_ip and (plug_config or (email and password)))
 
 
 def read_setup_status(config_dir: Path) -> SetupStatus:
@@ -248,34 +298,43 @@ def read_setup_status(config_dir: Path) -> SetupStatus:
     or logged. Environment overrides count as satisfied, matching the CLI's
     documented precedence.
     """
+    stored = read_tapo_credentials(config_dir)
+    file_saved = bool(
+        stored
+        and stored.device_ip
+        and (stored.plug_config or (stored.email and stored.password))
+    )
     return SetupStatus(
         weather_key_saved=bool(os.getenv(ENV_WEATHER_KEY, "").strip())
         or _file_has_content(config_dir / WEATHER_FILE),
         price_key_saved=bool(os.getenv(ENV_PRICE_KEY, "").strip())
         or _file_has_content(config_dir / PRICE_FILE),
-        tapo_saved=_env_credentials_complete() or _env_file_credentials(config_dir),
+        tapo_saved=_env_tapo_saved() or file_saved,
+        tapo_verified=bool(
+            stored and stored.plug_config
+        ) or bool(os.getenv(PLUG_CONFIG_KEY, "").strip()),
+        tapo_ip_saved=bool(
+            stored and stored.device_ip
+        ) or bool(os.getenv("DEVICEIP", "").strip()),
     )
 
 
-def _env_file_credentials(config_dir: Path) -> bool:
-    """Parse ``tapologin.env`` for the three keys without mutating os.environ."""
-    return read_tapo_credentials(config_dir) is not None
-
-
-def read_tapo_credentials(config_dir: Path) -> tuple[str, str, str] | None:
-    """Read EMAIL/PASSWORD/DEVICEIP from ``tapologin.env``; None when incomplete.
+def read_tapo_credentials(config_dir: Path) -> TapoCredentials | None:
+    """Read the plug settings from ``tapologin.env``.
 
     Parses with python-dotenv's own parser so quoted values read back
-    exactly; ``os.environ`` is never touched.
+    exactly; ``os.environ`` is never touched. Returns None when the file
+    is missing or unreadable, otherwise a record with empty fields for the
+    keys that are not stored.
     """
     path = config_dir / TAPO_FILE
     try:
         parsed = _parse_env_content(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError):
         return None
-    email = parsed.get("EMAIL", "").strip()
-    password = parsed.get("PASSWORD", "").strip()
-    device_ip = parsed.get("DEVICEIP", "").strip()
-    if email and password and device_ip:
-        return email, password, device_ip
-    return None
+    return TapoCredentials(
+        device_ip=parsed.get("DEVICEIP", "").strip(),
+        email=parsed.get("EMAIL", "").strip(),
+        password=parsed.get("PASSWORD", "").strip(),
+        plug_config=parsed.get(PLUG_CONFIG_KEY, "").strip(),
+    )

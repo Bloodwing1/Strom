@@ -25,8 +25,8 @@ from .conftest import make_config_dir
 
 @pytest.fixture(autouse=True)
 def clean_environment(monkeypatch):
-    for var in ("EMAIL", "PASSWORD", "DEVICEIP", "STROM_CONFIG_DIR",
-                "WEATHER_API_KEY", "PRICE_API_KEY"):
+    for var in ("EMAIL", "PASSWORD", "DEVICEIP", "PLUG_CONFIG",
+                "STROM_CONFIG_DIR", "WEATHER_API_KEY", "PRICE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -137,8 +137,38 @@ class TestAppConfig:
         config.mkdir()
         (config / "weather_api_key.txt").write_text("k\n")
         (config / "price_api_key.txt").write_text("k\n")
-        with pytest.raises(ConfigurationError, match="EMAIL"):
+        with pytest.raises(ConfigurationError, match="DEVICEIP"):
             load_app_config(config)
+
+    def test_plug_without_account_is_accepted(self, tmp_path):
+        config = tmp_path / "config"
+        config.mkdir()
+        (config / "weather_api_key.txt").write_text("k\n")
+        (config / "price_api_key.txt").write_text("k\n")
+        (config / "tapologin.env").write_text("DEVICEIP=192.168.1.7\n")
+        app = load_app_config(config)
+        assert app.credentials.device_ip == "192.168.1.7"
+        assert app.credentials.email == ""
+        assert app.credentials.password == ""
+        assert app.credentials.plug_config == ""
+
+    def test_half_credentials_rejected(self, tmp_path):
+        config = tmp_path / "config"
+        config.mkdir()
+        (config / "tapologin.env").write_text(
+            "DEVICEIP=192.168.1.7\nPASSWORD=secret\n"
+        )
+        with pytest.raises(ConfigurationError, match="EMAIL"):
+            load_credentials(config)
+
+    def test_invalid_plug_config_rejected(self, tmp_path):
+        config = tmp_path / "config"
+        config.mkdir()
+        (config / "tapologin.env").write_text(
+            "DEVICEIP=192.168.1.7\nPLUG_CONFIG={not json\n"
+        )
+        with pytest.raises(ConfigurationError, match="PLUG_CONFIG"):
+            load_credentials(config)
 
     def test_works_from_arbitrary_cwd(self, tmp_path, monkeypatch):
         config = make_config_dir(tmp_path)

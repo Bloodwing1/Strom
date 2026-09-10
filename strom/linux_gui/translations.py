@@ -328,10 +328,37 @@ SPANISH.update({
     ),
     (
         "You'll need an OpenWeatherMap key, an ENTSO-E token, and your "
-        "Tapo account details."
+        "plug's IP address."
     ): (
-        "Necesitarás una clave de OpenWeatherMap, un token de ENTSO-E y los "
-        "datos de tu cuenta Tapo."
+        "Necesitarás una clave de OpenWeatherMap, un token de ENTSO-E y la "
+        "dirección IP de tu enchufe."
+    ),
+    "Plug not verified": "Enchufe sin verificar",
+    "Enter the plug IP address first.": (
+        "Introduce primero la dirección IP del enchufe."
+    ),
+    (
+        "This plug asks for the TP-Link account. Enter the email and "
+        "password, then test again."
+    ): (
+        "Este enchufe pide la cuenta de TP-Link. Introduce el correo y la "
+        "contraseña y vuelve a probar."
+    ),
+    (
+        "Many plugs need no account. Enter the IP address, leave the email "
+        "and password empty, and click Test; Strom only asks for the account "
+        "if your plug requires it."
+    ): (
+        "Muchos enchufes no necesitan cuenta. Introduce la dirección IP, deja "
+        "el correo y la contraseña vacíos y pulsa Probar; Strom solo pedirá "
+        "la cuenta si tu enchufe la necesita."
+    ),
+    (
+        "Enter both the Tapo email and the password, or leave both empty and "
+        "test the plug without an account."
+    ): (
+        "Introduce el correo y la contraseña de Tapo, o deja ambos vacíos y "
+        "prueba el enchufe sin cuenta."
     ),
     "Start heating for the next hour": "Empezar a calentar durante la próxima hora",
     "Start heating": "Empezar a calentar",

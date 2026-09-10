@@ -49,6 +49,7 @@ from strom.linux_gui.setup_files import (
     save_api_key,
     save_tapo_credentials,
 )
+from strom.plug import PlugCredentials
 from strom.linux_gui.update_service import (
     ACK_ENV,
     UpdateCoordinator,
@@ -157,8 +158,10 @@ _PRICE_HELP_TEXT = (
 _TAPO_HELP_TEXT = (
     "These are the login details for your TP-Link Tapo account — the email "
     "and password you use in the Tapo phone app for the smart plug your "
-    "heater is connected to. The IP address is shown in the Tapo app: tap "
-    "your plug, then the gear icon, then look under device information."
+    "heater is connected to. You only need the account if the plug asks for "
+    "it; many newer plugs work without one. The IP address is shown in the "
+    "Tapo app: tap your plug, then the gear icon, then look under device "
+    "information."
 )
 
 SpecFactory = Callable[[Path, int, str], LaunchSpec]
@@ -225,6 +228,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._report_path: str | None = None
         self._run_started: float | None = None
         self._cycle_seen_active = False
+        self._tested_plug: PlugCredentials | None = None
         self._checker = SetupChecker(self)
         self._checker.weatherChecked.connect(self._on_weather_checked)
         self._checker.priceChecked.connect(self._on_price_checked)
@@ -712,8 +716,10 @@ class MainWindow(QtWidgets.QMainWindow):
             ),
             _TAPO_HELP_TEXT: (
                 "Introduce el correo y la contraseña que usas en la aplicación Tapo "
-                "para el enchufe de tu calefactor. Para ver la dirección IP, abre el "
-                "enchufe en Tapo y busca la información del dispositivo en sus ajustes."
+                "para el enchufe de tu calefactor. Solo necesitas la cuenta si el "
+                "enchufe la pide; muchos enchufes recientes funcionan sin ella. "
+                "Para ver la dirección IP, abre el enchufe en Tapo y busca la "
+                "información del dispositivo en sus ajustes."
             ),
             _HORIZON_HELP_TEXT: (
                 "Cuántas horas planifica Strom por adelantado. Esto no alarga la "
@@ -779,7 +785,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         needs = QtWidgets.QLabel(
             "You'll need an OpenWeatherMap key, an ENTSO-E token, and your "
-            "Tapo account details.",
+            "plug's IP address.",
             box,
         )
         needs.setWordWrap(True)
@@ -886,6 +892,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._section_header(
             layout, "Smart plug account (Tapo)", self._tapo_help_text
         )
+
+        hint = QtWidgets.QLabel(
+            "Many plugs need no account. Enter the IP address, leave the "
+            "email and password empty, and click Test; Strom only asks for "
+            "the account if your plug requires it.",
+            box,
+        )
+        hint.setWordWrap(True)
+        hint.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
+        layout.addWidget(hint)
 
         form = QtWidgets.QFormLayout()
         form.setSpacing(8)
@@ -1251,18 +1267,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_controls()
 
     def _update_heating_chips(self, status: SetupStatus) -> None:
+        if status.tapo_saved:
+            plug_text = "Plug account ✓"
+        elif status.tapo_ip_saved:
+            plug_text = "Plug not verified"
+        else:
+            plug_text = "Plug account missing"
         chips = (
             (self._chip_weather, status.weather_key_saved,
              "Weather key ✓", "Weather key missing"),
             (self._chip_price, status.price_key_saved,
              "Price key ✓", "Price key missing"),
-            (self._chip_plug, status.tapo_saved,
-             "Plug account ✓", "Plug account missing"),
         )
         for chip, done, ready_text, missing_text in chips:
             chip.setText(
                 self._translated(ready_text if done else missing_text)
             )
+        self._chip_plug.setText(self._translated(plug_text))
 
     def _update_step_indicator(self, status: SetupStatus) -> None:
         done = (
@@ -1348,7 +1369,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
         self._weather_key_edit.clear()
-        self._set_chip(chip, self._translated("Saved, not tested"))
+        self._set_chip(chip, self._translated("Saved"))
         self._append_log(f"Weather key saved to {path}")
         self._refresh_setup_status()
 
@@ -1375,7 +1396,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
         self._price_key_edit.clear()
-        self._set_chip(chip, self._translated("Saved, not tested"))
+        self._set_chip(chip, self._translated("Saved"))
         self._append_log(f"Electricity price key saved to {path}")
         self._refresh_setup_status()
 
@@ -1384,12 +1405,28 @@ class MainWindow(QtWidgets.QMainWindow):
         config_dir = self._prepared_dir_for_save(chip)
         if config_dir is None:
             return
+        stored = read_tapo_credentials(config_dir)
+        email = self._tapo_email.text().strip() or (
+            stored.email if stored else ""
+        )
+        password = self._tapo_password.text().strip() or (
+            stored.password if stored else ""
+        )
+        device_ip = self._tapo_ip.text().strip() or (
+            stored.device_ip if stored else ""
+        )
+        # New account details supersede a derived configuration, since the
+        # account may have changed. Otherwise a stored proof is preserved.
+        plug_config = (
+            "" if (email or password) else (stored.plug_config if stored else "")
+        )
         try:
             path = save_tapo_credentials(
                 config_dir,
-                self._tapo_email.text(),
-                self._tapo_password.text(),
-                self._tapo_ip.text(),
+                email,
+                password,
+                device_ip,
+                plug_config=plug_config,
             )
         except SetupError as exc:
             self._set_chip(chip, self._setup_error_text(exc), error=True)
@@ -1406,8 +1443,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tapo_email.clear()
         self._tapo_password.clear()
         self._tapo_ip.clear()
-        self._set_chip(chip, self._translated("Saved, not tested"))
-        self._append_log(f"Plug account saved to {path}")
+        self._set_chip(chip, self._translated("Saved"))
+        self._append_log(f"Plug settings saved to {path}")
         self._refresh_setup_status()
 
     # --- credential checks (test buttons) ---
@@ -1473,38 +1510,93 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self._set_chip(self._price_status, message, error=True)
 
-    def _tapo_values(self) -> tuple[str, str, str] | None:
-        email = self._tapo_email.text().strip() or os.getenv("EMAIL", "").strip()
-        password = self._tapo_password.text().strip() or os.getenv("PASSWORD", "").strip()
-        device_ip = self._tapo_ip.text().strip() or os.getenv("DEVICEIP", "").strip()
-        if email and password and device_ip:
-            return email, password, device_ip
+    def _plug_credentials_for_test(self) -> PlugCredentials | None:
+        """Build the test credentials: typed values, then stored, then env."""
         raw = self._config_dir_edit.text().strip()
-        if raw:
-            saved = read_tapo_credentials(Path(raw).expanduser())
-            if saved is not None:
-                return saved
-        return None
+        stored = read_tapo_credentials(Path(raw).expanduser()) if raw else None
+        device_ip = (
+            self._tapo_ip.text().strip()
+            or (stored.device_ip if stored else "")
+            or os.getenv("DEVICEIP", "").strip()
+        )
+        if not device_ip:
+            return None
+        email = self._tapo_email.text().strip()
+        password = self._tapo_password.text().strip()
+        if email and password:
+            return PlugCredentials(
+                device_ip=device_ip, email=email, password=password
+            )
+        if stored and stored.plug_config:
+            return PlugCredentials(
+                device_ip=device_ip, plug_config=stored.plug_config
+            )
+        if stored and stored.email and stored.password:
+            return PlugCredentials(
+                device_ip=device_ip,
+                email=stored.email,
+                password=stored.password,
+            )
+        env_email = os.getenv("EMAIL", "").strip()
+        env_password = os.getenv("PASSWORD", "").strip()
+        if env_email and env_password:
+            return PlugCredentials(
+                device_ip=device_ip, email=env_email, password=env_password
+            )
+        return PlugCredentials(device_ip=device_ip)
 
     def _on_test_tapo(self) -> None:
-        values = self._tapo_values()
-        if values is None:
+        credentials = self._plug_credentials_for_test()
+        if credentials is None:
             self._set_chip(
                 self._tapo_status,
-                self._translated("Save the plug details first, then test them."),
+                self._translated("Enter the plug IP address first."),
                 error=True,
             )
             return
+        self._tested_plug = credentials
         self._tapo_test.setEnabled(False)
         self._set_chip(self._tapo_status, self._translated("Testing…"))
-        self._checker.check_plug(*values)
+        self._checker.check_plug(credentials)
 
-    def _on_plug_checked(self, ok: bool, message: str) -> None:
+    def _on_plug_checked(
+        self, ok: bool, message: str, plug_config: str
+    ) -> None:
         self._tapo_test.setEnabled(True)
-        if ok:
-            self._set_chip(self._tapo_status, self._translated("Plug found ✓"))
-        else:
-            self._set_chip(self._tapo_status, message, error=True)
+        if not ok:
+            self._set_chip(
+                self._tapo_status, self._translated(message), error=True
+            )
+            return
+        if plug_config:
+            self._persist_plug_config(plug_config)
+        self._set_chip(self._tapo_status, self._translated("Works ✓"))
+
+    def _persist_plug_config(self, plug_config: str) -> None:
+        """Store the derived proof so the account is no longer needed."""
+        credentials = self._tested_plug
+        raw = self._config_dir_edit.text().strip()
+        if credentials is None or not credentials.device_ip or not raw:
+            return
+        try:
+            save_tapo_credentials(
+                Path(raw).expanduser(),
+                "",
+                "",
+                credentials.device_ip,
+                plug_config=plug_config,
+            )
+        except SetupError as exc:
+            self._set_chip(
+                self._tapo_status, self._setup_error_text(exc), error=True
+            )
+            return
+        except OSError as exc:
+            self._set_chip(self._tapo_status, str(exc), error=True)
+            return
+        self._tapo_email.clear()
+        self._tapo_password.clear()
+        self._refresh_setup_status()
 
     def _show_help(self, text: str, url: str | None = None) -> None:
         """Static guidance with an optional button for the sign-up page."""

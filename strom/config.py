@@ -23,7 +23,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from .errors import ConfigurationError
 from .optimization_utils import House
@@ -46,11 +46,18 @@ HOUSE_CONFIG_KEYS = frozenset({
 
 @dataclass(frozen=True)
 class Credentials:
-    """Device and account credentials, validated at startup."""
+    """Plug endpoint plus optional proof, validated at startup.
+
+    ``device_ip`` is required. ``plug_config`` is the derived device
+    configuration captured after a successful login (preferred when
+    present). ``email`` and ``password`` are the optional TP-Link account
+    credentials; a plug that needs no account can leave them empty.
+    """
 
     email: str
     password: str
     device_ip: str
+    plug_config: str = ""
 
 
 @dataclass(frozen=True)
@@ -91,28 +98,62 @@ def resolve_config_dir(explicit: str | Path | None = None) -> Path:
     return candidate
 
 
-def _required_env(name: str, config_dir: Path) -> str:
-    value = os.getenv(name)
-    if not value or not value.strip():
-        raise ConfigurationError(
-            f"{name} is not set; add it to {config_dir / CREDENTIAL_FILE} "
-            "or export it in the environment."
-        )
-    return value.strip()
+def _optional_env(name: str) -> str:
+    return (os.getenv(name) or "").strip()
+
+
+def _credential_value(name: str, file_values: dict[str, str]) -> str:
+    """Environment wins over the file; both are stripped."""
+    return _optional_env(name) or file_values.get(name, "")
 
 
 def load_credentials(config_dir: Path) -> Credentials:
-    """Load and validate device credentials before any network operation."""
+    """Load and validate device credentials before any network operation.
+
+    ``DEVICEIP`` is required. ``EMAIL`` and ``PASSWORD`` are optional but
+    must be set together. ``PLUG_CONFIG`` carries the derived device
+    configuration captured after a successful login; it takes precedence
+    over the account credentials at connect time.
+
+    The credential file is parsed without mutating ``os.environ``;
+    exported variables take precedence over file values.
+    """
     env_file = config_dir / CREDENTIAL_FILE
-    if env_file.is_file():
-        # Never overrides variables already present in the environment.
-        load_dotenv(env_file, override=False)
-    credentials = Credentials(
-        email=_required_env("EMAIL", config_dir),
-        password=_required_env("PASSWORD", config_dir),
-        device_ip=_required_env("DEVICEIP", config_dir),
+    raw_values = dotenv_values(env_file) if env_file.is_file() else {}
+    file_values = {
+        key: (value or "").strip() for key, value in raw_values.items()
+    }
+    email = _credential_value("EMAIL", file_values)
+    password = _credential_value("PASSWORD", file_values)
+    if bool(email) != bool(password):
+        raise ConfigurationError(
+            "EMAIL and PASSWORD must be set together (or both left empty "
+            "for plugs that need no TP-Link account)."
+        )
+    plug_config = _credential_value("PLUG_CONFIG", file_values)
+    if plug_config:
+        try:
+            parsed = json.loads(plug_config)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationError(
+                f"PLUG_CONFIG is not valid JSON: {exc.msg}."
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ConfigurationError(
+                "PLUG_CONFIG must be a JSON object."
+            )
+    device_ip = _credential_value("DEVICEIP", file_values)
+    if not device_ip:
+        raise ConfigurationError(
+            f"DEVICEIP is not set; add it to {env_file} or export it in "
+            "the environment."
+        )
+    return Credentials(
+        email=email,
+        password=password,
+        device_ip=device_ip,
+        plug_config=plug_config,
     )
-    return credentials
 
 
 def load_house_params(config_dir: Path) -> dict:

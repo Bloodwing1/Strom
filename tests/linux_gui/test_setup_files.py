@@ -41,6 +41,12 @@ TRICKY_PASSWORDS = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def clean_credential_environment(monkeypatch):
+    for name in ("EMAIL", "PASSWORD", "DEVICEIP", "PLUG_CONFIG"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.parametrize("password", TRICKY_PASSWORDS)
 def test_tapo_passwords_roundtrip_verbatim(tmp_path, password):
     path = save_tapo_credentials(tmp_path, "u@x.com", password, "192.168.1.42")
@@ -198,15 +204,50 @@ def test_read_tapo_credentials_roundtrips_without_touching_env(tmp_path, monkeyp
     monkeypatch.delenv("DEVICEIP", raising=False)
     save_tapo_credentials(tmp_path, "user@example.com", 'pa ss "word', "192.168.1.7")
 
-    assert read_tapo_credentials(tmp_path) == (
-        "user@example.com",
-        'pa ss "word',
-        "192.168.1.7",
-    )
+    stored = read_tapo_credentials(tmp_path)
+    assert stored is not None
+    assert stored.email == "user@example.com"
+    assert stored.password == 'pa ss "word'
+    assert stored.device_ip == "192.168.1.7"
+    assert stored.plug_config == ""
     assert "EMAIL" not in os.environ
 
 
-def test_read_tapo_credentials_none_when_incomplete(tmp_path):
-    (tmp_path / TAPO_FILE).write_text('EMAIL="e@x.com"\nPASSWORD="p"\n')
-    assert read_tapo_credentials(tmp_path) is None
+def test_read_tapo_credentials_returns_partial_records(tmp_path):
+    (tmp_path / TAPO_FILE).write_text('DEVICEIP="192.168.1.1"\n')
+    stored = read_tapo_credentials(tmp_path)
+    assert stored is not None
+    assert stored.device_ip == "192.168.1.1"
+    assert stored.email == ""
     assert read_tapo_credentials(tmp_path / "missing") is None
+
+
+def test_derived_config_is_stored_instead_of_the_password(tmp_path):
+    plug_config = '{"host": "192.168.1.9", "credentials_hash": "abc"}'
+    save_tapo_credentials(
+        tmp_path, "", "", "192.168.1.9", plug_config=plug_config
+    )
+
+    stored = read_tapo_credentials(tmp_path)
+    assert stored is not None
+    assert stored.plug_config == plug_config
+    assert stored.email == ""
+    assert stored.password == ""
+    status = read_setup_status(tmp_path)
+    assert status.tapo_saved
+    assert status.tapo_verified
+    assert status.tapo_ip_saved
+
+
+def test_ip_only_is_saved_but_not_verified(tmp_path):
+    save_tapo_credentials(tmp_path, "", "", "192.168.1.9")
+
+    status = read_setup_status(tmp_path)
+    assert status.tapo_ip_saved
+    assert not status.tapo_saved
+    assert not status.tapo_verified
+
+
+def test_half_account_details_rejected(tmp_path):
+    with pytest.raises(SetupError, match="both"):
+        save_tapo_credentials(tmp_path, "user@example.com", "", "192.168.1.9")

@@ -23,6 +23,7 @@ from strom.config import AppConfig, load_app_config
 from strom.controller import ControlReport, ControllerDeps, run_control_cycle
 from strom.control import SystemClock
 from strom.errors import ConfigurationError, StromError
+from strom.plug import PlugCredentials
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,12 @@ def build_controller_deps(config: AppConfig,
 async def run_cycle(config: AppConfig, deps: ControllerDeps) -> ControlReport:
     return await run_control_cycle(
         deps,
-        config.credentials.email,
-        config.credentials.password,
-        config.credentials.device_ip,
+        PlugCredentials(
+            device_ip=config.credentials.device_ip,
+            email=config.credentials.email,
+            password=config.credentials.password,
+            plug_config=config.credentials.plug_config,
+        ),
         config.house,
     )
 

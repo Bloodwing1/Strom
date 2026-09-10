@@ -10,6 +10,7 @@ of the credential before it reaches the UI.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from collections.abc import Callable
 
@@ -17,7 +18,14 @@ import pandas as pd
 from PySide6.QtCore import QObject, Signal, SignalInstance
 
 from strom.api_utils import get_price_series, get_weather_data
-from strom.errors import StromError
+from strom.errors import DeviceError, StromError
+from strom.plug import PlugCredentials, connect_plug
+
+#: Stable message the GUI translates when a plug wants the account.
+PLUG_NEEDS_CREDENTIALS = (
+    "This plug asks for the TP-Link account. Enter the email and password, "
+    "then test again."
+)
 
 
 def check_weather_key(api_key: str, city: str) -> None:
@@ -33,20 +41,32 @@ def check_price_key(api_key: str) -> None:
                      end=now, max_attempts=1, sleep=lambda _seconds: None)
 
 
-async def _discover_plug(email: str, password: str, device_ip: str) -> None:
-    from kasa import Discover
+async def _probe_plug(credentials: PlugCredentials) -> str | None:
+    """Connect with the standard policy and capture the derived proof."""
+    from kasa.exceptions import AuthenticationError
 
-    plug = await Discover.discover_single(
-        device_ip, username=email, password=password
-    )
-    if plug is None:
+    try:
+        device = await connect_plug(credentials)
+    except AuthenticationError:
+        raise DeviceError(PLUG_NEEDS_CREDENTIALS) from None
+    if device is None:
         raise ConnectionError("no smart plug answered at that address")
-    await plug.async_close()  # type: ignore[attr-defined]
+    try:
+        # Even a credential-less success stores the connection type, so the
+        # plug stays verified and reconnects directly. The derived hash is
+        # included when the account was needed.
+        credentials_hash = device.credentials_hash
+        config = device.config.to_dict_control_credentials(
+            credentials_hash=credentials_hash
+        )
+        return json.dumps(config)
+    finally:
+        await device.async_close()
 
 
-def check_plug_credentials(email: str, password: str, device_ip: str) -> None:
-    """One LAN discovery; raises when the plug cannot be reached."""
-    asyncio.run(_discover_plug(email, password, device_ip))
+def check_plug_credentials(credentials: PlugCredentials) -> str | None:
+    """One LAN connection; returns the derived device config when available."""
+    return asyncio.run(_probe_plug(credentials))
 
 
 class SetupChecker(QObject):
@@ -54,42 +74,58 @@ class SetupChecker(QObject):
 
     weatherChecked = Signal(bool, str)
     priceChecked = Signal(bool, str)
-    plugChecked = Signal(bool, str)
+    plugChecked = Signal(bool, str, str)
 
     def check_weather(self, api_key: str, city: str) -> None:
-        self._spawn(lambda: check_weather_key(api_key, city),
-                    self._emit_weather, api_key)
+        self._spawn(
+            lambda: check_weather_key(api_key, city),
+            lambda ok, message, _result: _safe_emit(
+                self.weatherChecked, ok, message
+            ),
+            api_key,
+        )
 
     def check_price(self, api_key: str) -> None:
-        self._spawn(lambda: check_price_key(api_key),
-                    self._emit_price, api_key)
+        self._spawn(
+            lambda: check_price_key(api_key),
+            lambda ok, message, _result: _safe_emit(
+                self.priceChecked, ok, message
+            ),
+            api_key,
+        )
 
-    def check_plug(self, email: str, password: str, device_ip: str) -> None:
-        self._spawn(lambda: check_plug_credentials(email, password, device_ip),
-                    self._emit_plug, password)
+    def check_plug(self, credentials: PlugCredentials) -> None:
+        self._spawn(
+            lambda: check_plug_credentials(credentials),
+            self._emit_plug,
+            credentials.password,
+        )
 
-    def _spawn(self, work: Callable[[], None],
-               emit: Callable[[bool, str], None], secret: str) -> None:
+    def _spawn(
+        self,
+        work: Callable[[], object],
+        emit: Callable[[bool, str, object], None],
+        secret: str,
+    ) -> None:
         def run() -> None:
             try:
-                work()
+                result = work()
             except StromError as exc:
-                emit(False, _scrub(str(exc), secret))
+                emit(False, _scrub(str(exc), secret), None)
             except Exception as exc:  # noqa: BLE001 - shown as a short reason
-                emit(False, _scrub(f"{type(exc).__name__}: {exc}", secret))
+                emit(False, _scrub(f"{type(exc).__name__}: {exc}", secret), None)
             else:
-                emit(True, "")
+                emit(True, "", result)
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _emit_weather(self, ok: bool, message: str) -> None:
-        _safe_emit(self.weatherChecked, ok, message)
-
-    def _emit_price(self, ok: bool, message: str) -> None:
-        _safe_emit(self.priceChecked, ok, message)
-
-    def _emit_plug(self, ok: bool, message: str) -> None:
-        _safe_emit(self.plugChecked, ok, message)
+    def _emit_plug(self, ok: bool, message: str, result: object) -> None:
+        plug_config = result if isinstance(result, str) else ""
+        try:
+            self.plugChecked.emit(ok, message, plug_config)
+        except RuntimeError:
+            # The window was destroyed while the check was in flight.
+            pass
 
 
 def _safe_emit(signal: SignalInstance, ok: bool, message: str) -> None:

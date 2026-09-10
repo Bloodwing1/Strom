@@ -43,13 +43,15 @@ Python (and Node for the git hooks) is provisioned automatically.
 
 4. Create a _config_ folder in the root project directory. This folder is where your personal api keys will be saved
 5. Place your electricity price and weather API keys in a "price_api_key.txt" "weather_api_key.txt" file that you create in the _config_ folder.
-6. Place your tapo account credentials in a "tapologin.env" file in the _config_ folder. The content of this .env file should look like this:
+6. Place your plug details in a "tapologin.env" file in the _config_ folder. `DEVICEIP` is required; `EMAIL` and `PASSWORD` are only needed when the plug requires a TP-Link account. Plugs that need no account work with just the address:
 
     ```env
+    DEVICEIP=192.168.1.42
     EMAIL=myemail@hotmail.com
     PASSWORD=myPassword12
-    DEVICEIP=192.168.1.42
     ```
+
+    After a successful run or GUI **Test**, Strom can also store a derived `PLUG_CONFIG` line instead of the account password.
 
 6. You can optionally add your custom house heating parameters to a "house_config.json" file in the _config_ folder.
 
@@ -214,14 +216,22 @@ library requirements.
   which OpenWeatherMap resolves when a cycle runs. The GUI passes the selected
   place with the ES country code to the CLI through `--city`; electricity
   prices remain Spanish.
-- Paste-and-save setup: the weather key, the electricity price key, and
-  the Tapo account (email, password, plug IP) can be typed directly into
-  the window. Each account also has a **Test** button that performs the real
-  operation (one weather request, one published-price query, one LAN
-  discovery) and reports "Works ✓" or the reason it failed, so a typo is
-  caught during setup instead of during an hour-long run. Keys are tested
-  from the field you just typed, or from the saved file if the field is
-  empty. Saving writes the exact files the CLI reads
+- Paste-and-save setup: the weather key, the electricity price key, and the
+  plug endpoint (IP address, plus the Tapo email and password when the plug
+  needs them) can be typed directly into the window. Each account also has a
+  **Test** button that performs the real operation (one weather request, one
+  published-price query, one local plug connection) and reports "Works ✓" or
+  the reason it failed, so a typo is caught during setup instead of during an
+  hour-long run. Keys are tested from the field you just typed, or from the
+  saved file if the field is empty.
+- The plug account is optional. Many plugs need no TP-Link account: leave the
+  email and password empty, enter the IP address, and click **Test**. Strom
+  tries blank and default credentials first. When a plug does require the
+  account, the first successful **Test** stores a derived device
+  configuration (connection type plus a key hash) and drops the password, so
+  the TP-Link password is not kept on disk and the account is not needed
+  again unless the plug is reset.
+- Saving writes the exact files the CLI reads
   (`weather_api_key.txt`, `price_api_key.txt`, `tapologin.env`) into the
   selected folder — created automatically if needed — with mode 0600 so
   other users on the machine cannot read them. Values are trimmed of
@@ -261,10 +271,12 @@ library requirements.
 - The GUI starts the CLI with the selected directory exported as
   `STROM_CONFIG_DIR` for that run; the CLI resolves the config path explicitly
   and never depends on the directory the GUI was launched from.
-- Credentials and keys exported as environment variables (`EMAIL`,
-  `PASSWORD`, `DEVICEIP`, `WEATHER_API_KEY`, and `PRICE_API_KEY`) override
-  values from `tapologin.env` and the corresponding key files, exactly as
-  with the CLI.
+- Credentials and keys exported as environment variables (`DEVICEIP`,
+  `PLUG_CONFIG`, `EMAIL`, `PASSWORD`, `WEATHER_API_KEY`, and `PRICE_API_KEY`)
+  override values from `tapologin.env` and the corresponding key files,
+  exactly as with the CLI. `EMAIL` and `PASSWORD` are optional but must be
+  set together; `PLUG_CONFIG` (the derived device configuration) takes
+  precedence over them at connect time.
 - The GUI remembers the last used directory, city, language, horizon, log level,
   automatic-repeat preference, and window geometry. The initial directory is
   the saved path, then `STROM_CONFIG_DIR`, then `~/.config/strom`. Only

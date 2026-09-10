@@ -58,14 +58,82 @@ def test_checker_reports_failure_without_the_secret(qtbot, monkeypatch):
 
 
 def test_checker_reports_success(qtbot, monkeypatch):
-    monkeypatch.setattr(
-        setup_check, "check_plug_credentials", lambda e, p, ip: None
-    )
-    checker = setup_check.SetupChecker()
-    results: list[tuple[bool, str]] = []
-    checker.plugChecked.connect(lambda ok, msg: results.append((ok, msg)))
+    from strom.plug import PlugCredentials
 
-    checker.check_plug("user@example.com", "password", "192.168.1.9")
+    captured: list[PlugCredentials] = []
+
+    def fake_check(credentials):
+        captured.append(credentials)
+        return '{"host": "192.168.1.9", "credentials_hash": "abc"}'
+
+    monkeypatch.setattr(setup_check, "check_plug_credentials", fake_check)
+    checker = setup_check.SetupChecker()
+    results: list[tuple[bool, str, str]] = []
+    checker.plugChecked.connect(
+        lambda ok, msg, config: results.append((ok, msg, config))
+    )
+
+    checker.check_plug(
+        PlugCredentials(
+            device_ip="192.168.1.9",
+            email="user@example.com",
+            password="password",
+        )
+    )
 
     qtbot.waitUntil(lambda: bool(results), timeout=5000)
-    assert results == [(True, "")]
+    assert captured[0].device_ip == "192.168.1.9"
+    assert results == [
+        (True, "", '{"host": "192.168.1.9", "credentials_hash": "abc"}')
+    ]
+
+
+def test_checker_reports_an_account_requiring_plug(qtbot, monkeypatch):
+    from strom.errors import DeviceError
+    from strom.plug import PlugCredentials
+
+    def needs_account(credentials):
+        raise DeviceError(setup_check.PLUG_NEEDS_CREDENTIALS)
+
+    monkeypatch.setattr(setup_check, "check_plug_credentials", needs_account)
+    checker = setup_check.SetupChecker()
+    results: list[tuple[bool, str, str]] = []
+    checker.plugChecked.connect(
+        lambda ok, msg, config: results.append((ok, msg, config))
+    )
+
+    checker.check_plug(PlugCredentials(device_ip="192.168.1.9"))
+
+    qtbot.waitUntil(lambda: bool(results), timeout=5000)
+    assert results[0][0] is False
+    assert setup_check.PLUG_NEEDS_CREDENTIALS in results[0][1]
+
+
+def test_blank_credentials_still_store_the_connection(monkeypatch):
+    from strom.plug import PlugCredentials
+
+    class FakeConfig:
+        def to_dict_control_credentials(self, credentials_hash=None):
+            return {
+                "host": "192.168.1.9",
+                "credentials": {"username": "", "password": ""},
+            }
+
+    class FakeDevice:
+        credentials_hash = None
+        config = FakeConfig()
+
+        async def async_close(self):
+            pass
+
+    async def fake_connect(credentials):
+        return FakeDevice()
+
+    monkeypatch.setattr(setup_check, "connect_plug", fake_connect)
+
+    result = setup_check.check_plug_credentials(
+        PlugCredentials(device_ip="192.168.1.9")
+    )
+
+    assert result is not None
+    assert '"host": "192.168.1.9"' in result

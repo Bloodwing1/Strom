@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from strom.controller import ControllerDeps, run_control_cycle
+from strom.plug import PlugCredentials
 from strom.errors import (
     DeviceError,
     InvalidScheduleError,
@@ -22,10 +23,14 @@ from strom.errors import (
 from .conftest import make_schedule
 
 
+def _creds(device_ip="1.2.3.4", email="e", password="p"):
+    return PlugCredentials(device_ip=device_ip, email=email, password=password)
+
+
 def make_deps(plug, clock, *, discover=None, fetch=None, optimize=None,
               max_on=3 * 3600.0):
     return ControllerDeps(
-        discover=discover or (lambda ip, email, pw: _return(plug)),
+        discover=discover or (lambda credentials: _return(plug)),
         fetch_data=fetch or (lambda: make_schedule([0.5])),
         optimize=optimize or (lambda df, house, mode: df),
         clock=clock,
@@ -41,20 +46,20 @@ async def _return(value):
 class TestHappyPath:
     async def test_full_cycle(self, plug, clock):
         deps = make_deps(plug, clock)
-        await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+        await run_control_cycle(deps, _creds(), house=None)
         assert plug.calls[:3] == ["turn_on", "turn_off", "update"]
         assert plug.calls.count("async_close") == 1
 
     async def test_cycle_returns_a_report(self, plug, clock):
         deps = make_deps(plug, clock)
-        report = await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+        report = await run_control_cycle(deps, _creds(), house=None)
         assert report.on_seconds == pytest.approx(1800.0)
         assert report.interval_seconds == pytest.approx(3600.0)
         assert report.estimated_cost_eur == pytest.approx(0.0)
 
     async def test_zero_duty_never_turns_on(self, plug, clock):
         deps = make_deps(plug, clock, fetch=lambda: make_schedule([0.0]))
-        await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+        await run_control_cycle(deps, _creds(), house=None)
         assert "turn_on" not in plug.calls
 
 
@@ -72,27 +77,27 @@ class TestDiscovery:
 
         deps = make_deps(
             plug, clock,
-            discover=lambda ip, e, p: _return(None),
+            discover=lambda credentials: _return(None),
             fetch=fetch,
             optimize=optimize,
         )
         with pytest.raises(DeviceError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
         assert calls == {"fetch": 0, "optimize": 0}
         assert plug.calls == []
 
     async def test_failed_discovery_raises_device_error(self, clock):
-        async def boom(ip, e, p):
+        async def boom(credentials):
             raise RuntimeError("kasa exploded")
 
         deps = make_deps(None, clock, discover=boom)
         with pytest.raises(DeviceError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
 
     async def test_missing_device_ip(self, plug, clock):
         deps = make_deps(plug, clock)
         with pytest.raises(DeviceError):
-            await run_control_cycle(deps, "e", "p", "", house=None)
+            await run_control_cycle(deps, PlugCredentials(device_ip=""), house=None)
         assert plug.calls == []
 
 
@@ -103,7 +108,7 @@ class TestFailureInjection:
 
         deps = make_deps(plug, clock, fetch=fetch)
         with pytest.raises(ProviderError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
         assert plug.calls.count("async_close") == 1
         assert "turn_on" not in plug.calls
 
@@ -113,7 +118,7 @@ class TestFailureInjection:
 
         deps = make_deps(plug, clock, optimize=optimize)
         with pytest.raises(OptimizationError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
         assert plug.calls.count("async_close") == 1
         assert "turn_on" not in plug.calls
 
@@ -121,7 +126,7 @@ class TestFailureInjection:
         deps = make_deps(plug, clock,
                          fetch=lambda: make_schedule([np.nan]))
         with pytest.raises(InvalidScheduleError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
         assert plug.calls.count("async_close") == 1
         assert "turn_on" not in plug.calls
         assert "turn_off" not in plug.calls
@@ -130,14 +135,14 @@ class TestFailureInjection:
         plug.fail_on = lambda op: DeviceError("plug refused") if op == "turn_on" else None
         deps = make_deps(plug, clock, fetch=lambda: make_schedule([1.0]))
         with pytest.raises(DeviceError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
         assert plug.calls.count("async_close") == 1
 
     async def test_state_update_failure_closes_exactly_once(self, plug, clock):
         plug.fail_on = lambda op: RuntimeError("update blew up") if op == "update" else None
         deps = make_deps(plug, clock)
         with pytest.raises(DeviceError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
         assert plug.calls.count("async_close") == 1
 
     async def test_unexpected_error_still_closes_and_propagates(self, plug, clock):
@@ -146,7 +151,7 @@ class TestFailureInjection:
 
         deps = make_deps(plug, clock, fetch=fetch)
         with pytest.raises(KeyError):
-            await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+            await run_control_cycle(deps, _creds(), house=None)
         assert plug.calls.count("async_close") == 1
 
     async def test_close_failure_does_not_mask_result(self, plug, clock):
@@ -155,7 +160,7 @@ class TestFailureInjection:
 
         plug.async_close = broken_close
         deps = make_deps(plug, clock)
-        await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+        await run_control_cycle(deps, _creds(), house=None)
 
 
 class TestExitCodes:

@@ -36,6 +36,7 @@ from .control import (
 from .data_utils import get_temp_price_df
 from .errors import DeviceError, StromError
 from .optimization_utils import House, find_heating_output
+from .plug import PlugCredentials, connect_plug
 
 logger = logging.getLogger(__name__)
 
@@ -49,26 +50,19 @@ class ControlReport:
     estimated_cost_eur: float | None
 
 
-async def _default_discover(device_ip, email, password):
-    from kasa import Discover
-
-    return await Discover.discover_single(device_ip, username=email,
-                                          password=password)
-
-
 @dataclass
 class ControllerDeps:
     """Injection points for the control cycle.
 
     Attributes:
-        discover: async callable ``(device_ip, email, password) -> plug|None``.
+        discover: async callable ``(PlugCredentials) -> plug|None``.
         fetch_data: callable ``() -> DataFrame`` with weather and prices.
         optimize: callable ``(df, house, mode) -> schedule DataFrame``.
         clock: deterministic-injectable time source for actuation.
         max_on_seconds: independent watchdog limit.
     """
 
-    discover: Callable[[str, str, str], Awaitable] = _default_discover
+    discover: Callable[[PlugCredentials], Awaitable] = connect_plug
     fetch_data: Callable[[], pd.DataFrame] = field(
         default_factory=lambda: get_temp_price_df,
     )
@@ -108,28 +102,29 @@ async def _device_command(dev, operation: str) -> None:
 
 async def run_control_cycle(
     deps: ControllerDeps,
-    email: str,
-    password: str,
-    device_ip: str,
+    credentials: PlugCredentials,
     house: House,
 ) -> ControlReport:
     """Run one full control cycle with strict cleanup semantics."""
-    if not device_ip:
+    if not credentials.device_ip:
         raise DeviceError("No device IP configured; cannot discover the plug.")
 
     # Discovery first, validated immediately: nothing else may run unless the
     # device is actually reachable.
     try:
-        dev = await deps.discover(device_ip, email, password)
+        dev = await deps.discover(credentials)
     except StromError:
         raise
     except Exception as exc:
-        raise DeviceError(f"Failed to discover device at {device_ip!r}.") from exc
+        raise DeviceError(
+            f"Failed to discover device at {credentials.device_ip!r}."
+        ) from exc
 
     if dev is None:
         raise DeviceError(
-            "Device discovery returned no device; check DEVICEIP, email and "
-            "password. No data was fetched and nothing was actuated."
+            "Device discovery returned no device; check DEVICEIP and, if the "
+            "plug requires one, the Tapo account. No data was fetched and "
+            "nothing was actuated."
         )
 
     async with managed_plug(dev):

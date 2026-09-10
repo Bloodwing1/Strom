@@ -1319,11 +1319,13 @@ def test_plug_test_button_uses_saved_credentials(
     qtbot, make_window, tmp_path, monkeypatch
 ):
     import strom.linux_gui.setup_check as setup_check
+    from strom.plug import PlugCredentials
 
-    seen: dict = {}
+    seen: list[PlugCredentials] = []
 
-    def fake_check(email, password, device_ip):
-        seen.update(email=email, password=password, ip=device_ip)
+    def fake_check(credentials):
+        seen.append(credentials)
+        return '{"host": "192.168.1.9", "credentials_hash": "abc"}'
 
     monkeypatch.setattr(setup_check, "check_plug_credentials", fake_check)
     window = make_window()
@@ -1337,13 +1339,56 @@ def test_plug_test_button_uses_saved_credentials(
     window._on_test_tapo()
 
     qtbot.waitUntil(
-        lambda: window._tapo_status.text() == "Plug found ✓", timeout=5000
+        lambda: window._tapo_status.text() == "Works ✓", timeout=5000
     )
-    assert seen == {
-        "email": "user@example.com",
-        "password": "secret",
-        "ip": "192.168.1.9",
-    }
+    assert seen[0].email == "user@example.com"
+    assert seen[0].password == "secret"
+    assert seen[0].device_ip == "192.168.1.9"
+    # The derived proof is stored and the password is dropped.
+    stored = (tmp_path / "tapologin.env").read_text()
+    assert "PLUG_CONFIG=" in stored
+    assert "PASSWORD=" not in stored
+    assert "EMAIL=" not in stored
+
+
+def test_plug_test_without_account_persists_only_the_proof(
+    qtbot, make_window, tmp_path, monkeypatch
+):
+    import strom.linux_gui.setup_check as setup_check
+
+    monkeypatch.setattr(
+        setup_check, "check_plug_credentials",
+        lambda credentials: '{"host": "192.168.1.9", "credentials_hash": "abc"}',
+    )
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path))
+    window._tapo_ip.setText("192.168.1.9")
+
+    window._on_test_tapo()
+
+    qtbot.waitUntil(
+        lambda: window._tapo_status.text() == "Works ✓", timeout=5000
+    )
+    stored = (tmp_path / "tapologin.env").read_text()
+    assert "PLUG_CONFIG=" in stored
+    assert window._updater  # window still usable
+    status = window._current_setup_status()
+    assert status.tapo_verified
+
+
+def test_plug_test_without_ip_asks_for_one(qtbot, make_window, tmp_path, monkeypatch):
+    import strom.linux_gui.setup_check as setup_check
+
+    monkeypatch.setattr(
+        setup_check, "check_plug_credentials",
+        lambda credentials: pytest.fail("should not connect without an IP"),
+    )
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path))
+
+    window._on_test_tapo()
+
+    assert window._tapo_status.text() == "Enter the plug IP address first."
 
 
 def test_about_action_is_available(make_window):
