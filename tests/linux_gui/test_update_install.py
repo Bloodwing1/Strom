@@ -200,8 +200,8 @@ def test_rollback_before_replacement_discards_everything(tmp_path):
 def test_prepare_refuses_changed_target(tmp_path):
     target = _fake_appimage(tmp_path / "Strom.AppImage", tag="old")
     identity = _identity(target)
-    target.unlink()
-    _fake_appimage(target, tag="different")
+    replacement = _fake_appimage(tmp_path / "replacement.AppImage", tag="different")
+    os.replace(replacement, target)
     staging = tmp_path / ".Strom.AppImage.staging-test1"
     staging.write_bytes(b"new")
     staging.chmod(0o644)

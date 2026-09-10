@@ -135,9 +135,11 @@ def test_identity_matches_tracks_replacement_and_deletion(tmp_path):
     path = _fake_appimage(tmp_path)
     identity = app_identity.validate_appimage(path)
     assert identity is not None and identity.identity_matches()
-    # A replacement (unlink + rewrite) changes the inode on disk.
-    path.unlink()
-    path.write_bytes(b"\x7fELF" + b"\x00" * 64)
+    # Create the replacement while the old inode still exists; unlinking
+    # first allows some filesystems to recycle that inode immediately.
+    replacement = tmp_path / "replacement.AppImage"
+    replacement.write_bytes(b"\x7fELF" + b"\x00" * 64)
+    os.replace(replacement, path)
     assert identity.identity_matches() is False
     path.unlink()
     assert identity.identity_matches() is False
