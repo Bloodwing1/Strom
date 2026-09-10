@@ -201,11 +201,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if auto_update_check:
             self._updater.run_startup_checks()
 
-        self._build_ui()
-        self._restore_settings()
-        self._language.currentIndexChanged.connect(self._apply_language)
-        self._apply_language()
-
     # --- UI construction ---
 
     def _build_ui(self) -> None:
