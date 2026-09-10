@@ -810,8 +810,11 @@ def test_selftest_failure_rolls_back_and_reopens_controls(
 
 
 def test_candidate_exit_without_ack_restores_previous_version(
-    qtbot, fake_service, tmp_path
+    qtbot, fake_service, tmp_path, monkeypatch
 ):
+    from strom.linux_gui import update_service as update_service_module
+
+    monkeypatch.setattr(update_service_module, "ACK_TIMEOUT_MS", 300)
     target = tmp_path / "Strom.AppImage"
     target.write_bytes(b"old")
     os.chmod(target, 0o644)
@@ -824,13 +827,118 @@ def test_candidate_exit_without_ack_restores_previous_version(
         release=release, staging=staging, size=staging.stat().st_size,
         sha256=update_install.file_sha256(staging),
     )
-    with qtbot.waitSignal(coordinator.installFinished, timeout=30_000):
+    with qtbot.waitSignal(coordinator.installFinished, timeout=10_000):
         assert coordinator.accept_install(release) is True
     assert coordinator.state is UpdateState.Failed
     assert "restored" in coordinator.message
     assert target.read_bytes() == b"old"
     assert blocks == [True, False]
     assert saved == []
+
+
+def test_detached_launch_keeps_the_replacement_alive(qtbot, tmp_path):
+    """Qt kills a tracked QProcess's child; the replacement must be detached."""
+    import subprocess
+
+    from PySide6.QtCore import QProcessEnvironment
+
+    from strom.linux_gui.update_service import UpdateCoordinator
+
+    script = tmp_path / "candidate.sh"
+    marker = tmp_path / "started.txt"
+    script.write_text(
+        f'#!/bin/sh\nprintf "%s" "$STROM_TEST_MARK" > {marker}\nsleep 10\n'
+    )
+    os.chmod(script, 0o755)
+    environment = QProcessEnvironment.systemEnvironment()
+    environment.insert("STROM_TEST_MARK", "1")
+
+    assert UpdateCoordinator._start_detached(str(script), [], environment) is True
+
+    qtbot.waitUntil(marker.exists, timeout=5000)
+    assert marker.read_text() == "1"
+    running = subprocess.run(
+        ["pgrep", "-f", str(script)], capture_output=True, text=True
+    ).stdout
+    assert running
+    subprocess.run(["pkill", "-f", str(script)])
+
+
+def test_relaunch_detached_strips_the_launcher_environment(tmp_path, monkeypatch):
+    import subprocess as subprocess_module
+
+    from strom.linux_gui import update_service as update_service_module
+
+    image = tmp_path / "strom.AppImage"
+    image.write_bytes(b"x")
+    recorded: dict = {}
+
+    class FakePopen:
+        def __init__(self, args, **kwargs):
+            recorded["args"] = args
+            recorded["kwargs"] = kwargs
+
+    monkeypatch.setenv("APPIMAGE", str(image))
+    monkeypatch.setenv(update_service_module.ACK_ENV, "name:token")
+    monkeypatch.setenv("APPDIR", "/tmp/mount")
+    monkeypatch.setattr(subprocess_module, "Popen", FakePopen)
+
+    assert update_service_module.UpdateCoordinator._relaunch_detached() is True
+
+    assert recorded["args"] == [str(image)]
+    environment = recorded["kwargs"]["env"]
+    assert update_service_module.ACK_ENV not in environment
+    assert "APPDIR" not in environment
+    assert environment[update_service_module._HANDOFF_ENV] == "1"
+    assert recorded["kwargs"]["start_new_session"] is True
+
+
+def test_handoff_skipped_for_a_safe_launcher(
+    qtbot, fake_service, tmp_path, monkeypatch
+):
+    from strom.linux_gui import update_service as update_service_module
+
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o644)
+    coordinator, _blocks, _saved, _closed = _coordinator(
+        qtbot, tmp_path, target, FAKE_CANDIDATE
+    )
+    calls: list = []
+    monkeypatch.setenv(update_service_module.SAFE_LAUNCH_ENV, "1")
+    monkeypatch.setattr(
+        coordinator, "_relaunch_detached",
+        lambda: calls.append("relaunch") or True,
+    )
+
+    coordinator._handoff_from_old_launcher()
+
+    assert calls == []
+
+
+def test_handoff_relaunches_for_an_old_launcher(
+    qtbot, fake_service, tmp_path, monkeypatch
+):
+    from strom.linux_gui import update_service as update_service_module
+
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o644)
+    coordinator, _blocks, _saved, _closed = _coordinator(
+        qtbot, tmp_path, target, FAKE_CANDIDATE
+    )
+    monkeypatch.delenv(update_service_module.SAFE_LAUNCH_ENV, raising=False)
+    monkeypatch.delenv(update_service_module._HANDOFF_ENV, raising=False)
+    monkeypatch.setattr(coordinator, "_relaunch_detached", lambda: True)
+    scheduled: list = []
+    monkeypatch.setattr(
+        update_service_module.QTimer, "singleShot",
+        lambda ms, fn: scheduled.append(ms),
+    )
+
+    coordinator._handoff_from_old_launcher()
+
+    assert scheduled == [update_service_module._HANDOFF_GRACE_MS]
 
 
 def test_accepted_install_blocks_run_until_failure_or_restart(

@@ -536,3 +536,82 @@ SPANISH.update({
         "DEVICEIP como variables de entorno."
     ),
 })
+
+# Update dialogs, About and installation-capability reasons.
+SPANISH.update({
+    "Open the release page": "Abrir la página de versiones",
+    "{received} of {total} bytes downloaded": (
+        "{received} de {total} bytes descargados"
+    ),
+    "unknown": "desconocida",
+    (
+        "Update checks use GitHub's public API for Bloodwing1/Strom; the "
+        "repository, download destination and commands are never taken from "
+        "release text."
+    ): (
+        "Las comprobaciones de actualización usan la API pública de GitHub "
+        "para Bloodwing1/Strom; el repositorio, el destino de descarga y los "
+        "comandos nunca se toman del texto de la versión."
+    ),
+    (
+        "This Strom runs from Python source or pip, not from an AppImage, so "
+        "it cannot replace itself in place. Download the new version from "
+        "the release page instead."
+    ): (
+        "Esta versión de Strom se ejecuta desde el código fuente o pip, no "
+        "desde un AppImage, así que no puede reemplazarse a sí misma. "
+        "Descarga la nueva versión desde la página de versiones."
+    ),
+    (
+        "The installed Strom version could not be read, so in-place updating "
+        "is disabled. Download the new release from the release page."
+    ): (
+        "No se pudo leer la versión instalada de Strom, así que la "
+        "actualización en el sitio está desactivada. Descarga la nueva "
+        "versión desde la página de versiones."
+    ),
+    (
+        "Strom is running from an extracted AppDir without a verifiable "
+        "original AppImage, so in-place updating is unavailable. Download the "
+        "new release from the release page instead."
+    ): (
+        "Strom se ejecuta desde un AppDir extraído sin un AppImage original "
+        "verificable, así que la actualización en el sitio no está "
+        "disponible. Descarga la nueva versión desde la página de versiones."
+    ),
+    (
+        "The original AppImage file is missing, so in-place updating is "
+        "unavailable. Download the new release from the release page."
+    ): (
+        "Falta el archivo AppImage original, así que la actualización en el "
+        "sitio no está disponible. Descarga la nueva versión desde la página "
+        "de versiones."
+    ),
+    (
+        "The AppImage is a symbolic link, which the updater does not replace. "
+        "Download the new release from the release page or update the link "
+        "target by hand."
+    ): (
+        "El AppImage es un enlace simbólico y el actualizador no lo "
+        "reemplaza. Descarga la nueva versión desde la página de versiones o "
+        "actualiza el destino del enlace a mano."
+    ),
+    (
+        "This Strom AppImage has an architecture the updater does not "
+        "support. Download the matching release from the release page."
+    ): (
+        "Este AppImage de Strom tiene una arquitectura que el actualizador "
+        "no admite. Descarga la versión correspondiente desde la página de "
+        "versiones."
+    ),
+    (
+        "The AppImage location is not writable, so in-place updating is "
+        "unavailable. Move Strom to a writable folder or update it from the "
+        "release page."
+    ): (
+        "La ubicación del AppImage no permite escritura, así que la "
+        "actualización en el sitio no está disponible. Mueve Strom a una "
+        "carpeta con permisos de escritura o actualízalo desde la página de "
+        "versiones."
+    ),
+})

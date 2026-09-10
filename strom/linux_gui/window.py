@@ -247,6 +247,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._read_update_handshake()
         if auto_update_check:
             self._updater.run_startup_checks()
+        else:
+            # Local recovery still runs on every start; only the network
+            # check depends on the preference.
+            self._updater.recover_startup()
 
     # --- UI construction ---
 

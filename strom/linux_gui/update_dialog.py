@@ -118,7 +118,8 @@ class UpdateDialog(QtWidgets.QDialog):
         status = coordinator.status
         version = status.version
         self._current_label.setText(
-            str(version) if version is not None else _UNKNOWN_VERSION
+            str(version) if version is not None
+            else translate(_UNKNOWN_VERSION)
         )
         selection = coordinator.selection
         candidate = selection.candidate if selection is not None else None

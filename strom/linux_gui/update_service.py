@@ -27,6 +27,8 @@ import enum
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -72,6 +74,16 @@ from strom.linux_gui.updates import (
 
 #: Environment variable carrying the restart handshake to the new instance.
 ACK_ENV = "STROM_UPDATE_ACK"
+
+#: Marks a candidate launched by a launcher that does not kill it. Older
+#: launchers (through 0.3.2) destroyed the QProcess that started the
+#: candidate, and Qt's destructor kills the still-running child; a
+#: candidate without this mark restarts itself detached before the kill.
+SAFE_LAUNCH_ENV = "STROM_UPDATE_SAFE_LAUNCH"
+
+#: Marks a candidate that is already the detached copy (no further handoff).
+_HANDOFF_ENV = "STROM_UPDATE_HANDOFF"
+_HANDOFF_GRACE_MS = 2_000
 
 ACK_TIMEOUT_MS = 30_000
 SELF_TEST_TIMEOUT_MS = 300_000
@@ -698,10 +710,10 @@ class UpdateCoordinator(QObject):
 
     The heating child is never killed, detached or waited on
     synchronously; that remains the cycle runner's exclusive business. The
-    only process this coordinator ever stops is the updater-launched
-    candidate, which by construction cannot have started heating while
-    the handshake is incomplete: it is launched with a private handshake
-    that keeps heating disabled until the lifecycle lock is transferred.
+    replacement is launched detached and proven by the ack handshake: it
+    reports its own pid and that heating is still disabled before this
+    window releases the lifecycle lock, and a handshake that never lands
+    rolls back to the previous version.
     """
 
     stateChanged = Signal(object)
@@ -825,6 +837,10 @@ class UpdateCoordinator(QObject):
         """Total bytes expected for the current download."""
         return self._service.total
     # --- startup, checks, and the install action ---
+
+    def recover_startup(self) -> None:
+        """Recover an interrupted transaction. Safe to call on every start."""
+        self._recover_startup()
 
     def run_startup_checks(self, delay_ms: int = 2500) -> None:
         """Recover an interrupted transaction, then check once, silently."""
@@ -1131,11 +1147,36 @@ class UpdateCoordinator(QObject):
             arguments.append(EXTRACT_AND_RUN_SWITCH)
         environment = _cleaned_restart_environment()
         environment.insert(ACK_ENV, f"{name}:{self._ack_token}")
+        environment.insert(SAFE_LAUNCH_ENV, "1")
         self._ack_timer.start(ACK_TIMEOUT_MS)
         self._set_message("Starting the updated Strom…")
-        self._start_child(
+        if not self._start_detached(
             program=str(target.path), arguments=arguments, environment=environment
-        )
+        ):
+            self._settle_failed(
+                restore=True,
+                detail="the updated Strom could not be started",
+            )
+
+    @staticmethod
+    def _start_detached(
+        program: str,
+        arguments: list[str],
+        environment: QProcessEnvironment,
+    ) -> bool:
+        """Start the replacement outside this process tree.
+
+        A tracked QProcess kills its still-running child when it is
+        destroyed (Qt's destructor), which is exactly what must not
+        happen here: this window is about to close while the replacement
+        keeps running. ``startDetached`` is Qt's supported way to do that,
+        and the ack handshake still proves the candidate came up.
+        """
+        process = QProcess()
+        process.setProgram(program)
+        process.setArguments(arguments)
+        process.setProcessEnvironment(environment)
+        return bool(process.startDetached())
 
     def _start_child(
         self,
@@ -1173,11 +1214,6 @@ class UpdateCoordinator(QObject):
             return
         if self._phase is _Phase.SELFTEST:
             self._on_selftest_finished(exit_code)
-        elif self._phase is _Phase.LAUNCH and not self._acked:
-            self._settle_failed(
-                restore=True,
-                detail="the updated Strom did not report a successful start.",
-            )
 
     def _on_selftest_finished(self, exit_code: int) -> None:
         if exit_code != 0:
@@ -1268,6 +1304,54 @@ class UpdateCoordinator(QObject):
         socket.write(payload.encode("utf-8"))
         socket.flush()
         self._retry_candidate_recovery()
+        self._handoff_from_old_launcher()
+
+    def _handoff_from_old_launcher(self) -> None:
+        """Relaunch detached when an older launcher will kill this process.
+
+        Launchers through 0.3.2 tracked the candidate with a QProcess and
+        destroyed it right after the ack; Qt's destructor then kills the
+        still-running child, so the user sees the old window close and no
+        new one. A launcher that starts candidates detached marks the
+        environment; without that mark, start an independent copy and let
+        the old launcher's kill land on this process instead. The detached
+        copy reads the same configuration and needs no handshake because
+        the ack has already been delivered.
+        """
+        if SAFE_LAUNCH_ENV in os.environ or _HANDOFF_ENV in os.environ:
+            return
+        if not self._relaunch_detached():
+            return
+        QTimer.singleShot(_HANDOFF_GRACE_MS, lambda: os._exit(0))
+
+    @staticmethod
+    def _relaunch_detached() -> bool:
+        """Start an independent copy of the running AppImage; False on failure."""
+        image = os.environ.get("APPIMAGE")
+        if not image or not Path(image).is_file():
+            return False
+        arguments = [image]
+        if (
+            os.environ.get(EXTRACT_AND_RUN_ENV) == "1"
+            or EXTRACT_AND_RUN_SWITCH in sys.argv
+        ):
+            arguments.append(EXTRACT_AND_RUN_SWITCH)
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if name not in _RESTART_ENV_STRIP and name != ACK_ENV
+        }
+        environment[_HANDOFF_ENV] = "1"
+        try:
+            subprocess.Popen(
+                arguments,
+                env=environment,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except OSError:
+            return False
+        return True
 
     def _candidate_watchdog(self) -> None:
         if not self._acked:
@@ -1324,9 +1408,9 @@ class UpdateCoordinator(QObject):
         self._selftest_timer.stop()
         running = self._running_child()
         if running is not None:
-            # The only process ever stopped here is the updater-launched
-            # candidate, which cannot have started heating while the
-            # handshake was incomplete.
+            # The only process ever stopped here is the offline self-test.
+            # The replacement itself is launched detached and is proven by
+            # the ack handshake instead.
             self._restore_after_stop = (restore, detail)
             running.terminate()
             QTimer.singleShot(_TERMINATE_GRACE_MS, self._kill_running_child)

@@ -1113,6 +1113,10 @@ def test_automatic_check_notice_is_non_modal(qtbot, make_window, tmp_path, monke
 
 
 def test_spanish_translations_cover_update_texts(make_window, monkeypatch):
+    from strom.linux_gui import app_identity
+    from strom.linux_gui import update_dialog as update_dialog_module
+    from strom.linux_gui import update_service as update_service_module
+
     window = make_window()
     window._language.setCurrentIndex(1)  # Spanish
     assert window._check_updates_action.text() == "Buscar actualizaciones"
@@ -1123,6 +1127,30 @@ def test_spanish_translations_cover_update_texts(make_window, monkeypatch):
     assert dialog._check_button.text() == "Buscar actualizaciones"
     assert dialog._page_button.text() == "Abrir la página de versiones"
     assert dialog._close_button.text() == "Cerrar"
+
+    # Strings that only appear in dialogs or in fallback states.
+    assert window._translated("Open the release page") == (
+        "Abrir la página de versiones"
+    )
+    assert window._translated(update_dialog_module._PROGRESS_TEMPLATE) == (
+        "{received} de {total} bytes descargados"
+    )
+    assert window._translated(update_dialog_module._UNKNOWN_VERSION) == (
+        "desconocida"
+    )
+    assert window._translated(update_service_module._STABLE_URL_MESSAGE) != (
+        update_service_module._STABLE_URL_MESSAGE
+    )
+    for reason in (
+        app_identity.SOURCE_INSTALL_REASON,
+        app_identity.VERSION_UNAVAILABLE_REASON,
+        app_identity.EXTRACTED_DIR_REASON,
+        app_identity.MISSING_APPIMAGE_REASON,
+        app_identity.SYMLINK_REASON,
+        app_identity.ARCH_REASON,
+        app_identity.WRITE_REASON,
+    ):
+        assert window._translated(reason) != reason
 
 
 def test_cycle_running_blocks_install_and_child_stays_alive(
