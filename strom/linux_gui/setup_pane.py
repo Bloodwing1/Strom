@@ -26,6 +26,7 @@ from strom.linux_gui.ui_text import (
     _TAPO_HELP_TEXT,
     _WEATHER_HELP_TEXT,
     _WEATHER_SIGNUP_URL,
+    city_is_valid,
 )
 from strom.linux_gui.window_base import WindowBase
 from strom.plug import PlugCredentials
@@ -249,8 +250,7 @@ class SetupPaneMixin(WindowBase):
         return box
 
     def _city_is_valid(self) -> bool:
-        city = self._city.currentText().strip()
-        return bool(city) and not any(c in city for c in ",;\n\r")
+        return city_is_valid(self._city.currentText())
 
     def _valid_location(self) -> bool:
         valid = self._city_is_valid()
@@ -626,36 +626,9 @@ class SetupPaneMixin(WindowBase):
         return self._translated(str(exc))
 
     def _prepared_dir_for_save(self, chip: QtWidgets.QLabel) -> Path | None:
-        raw = self._config_dir_edit.text().strip()
-        if not raw:
-            self._set_chip(
-                chip, self._translated("Choose a settings folder first."),
-                error=True,
-            )
-            return None
-        try:
-            config_dir = Path(raw).expanduser().resolve()
-            if not config_dir.is_dir():
-                config_dir.mkdir(parents=True, exist_ok=True)
-        except FileExistsError:
-            self._set_chip(
-                chip,
-                self._translated(
-                    "That path is an existing file, not a folder: {path}"
-                ).format(path=raw),
-                error=True,
-            )
-            return None
-        except (OSError, RuntimeError) as exc:
-            self._set_chip(
-                chip,
-                self._translated(
-                    "Could not use the settings folder: {error}"
-                ).format(error=exc),
-                error=True,
-            )
-            return None
-        return config_dir
+        return self._prepared_config_dir(
+            lambda text: self._set_chip(chip, text, error=True)
+        )
 
     def _on_save_weather(self) -> bool:
         chip = self._weather_status
@@ -728,8 +701,6 @@ class SetupPaneMixin(WindowBase):
         try:
             path = save_tapo_credentials(
                 config_dir,
-                "",
-                "",
                 device_ip,
                 plug_config=(stored.plug_config if stored else ""),
             )
@@ -886,8 +857,6 @@ class SetupPaneMixin(WindowBase):
         try:
             save_tapo_credentials(
                 config_dir,
-                "",
-                "",
                 credentials.device_ip,
                 plug_config=plug_config,
             )

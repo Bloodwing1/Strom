@@ -10,6 +10,14 @@ Error messages must never contain credentials or API keys.
 """
 
 
+def scrub(message: str, *secrets: str | None) -> str:
+    """Remove credential material from an error message."""
+    for secret in secrets:
+        if secret:
+            message = message.replace(secret, "***")
+    return message
+
+
 class StromError(Exception):
     """Base class for expected operational failures."""
 

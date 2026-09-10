@@ -182,7 +182,8 @@ def _release_item(
 
 
 def _selection(pages, current: str, arch: str = "x86_64"):
-    return updates.select_update(pages, Version(current), arch)
+    releases = [item for page in pages for item in page]
+    return updates.select_update(releases, Version(current), arch)
 
 
 def test_alpha_to_alpha_channel_rule():
@@ -220,13 +221,11 @@ def test_drafts_are_ignored_but_not_misread_as_current():
     selection = _selection([[_release_item("v0.4.0", draft=True)]], "0.3.0")
     assert selection.kind is updates.SelectionKind.UP_TO_DATE
     assert selection.candidate is None
-    assert selection.newest_seen is None
 
 
 def test_release_without_required_assets_is_not_installable():
     selection = _selection([[_release_item("v0.4.0", with_appimage=False)]], "0.3.0")
     assert selection.kind is updates.SelectionKind.UP_TO_DATE
-    assert selection.newest_seen == Version("0.4.0")
     assert "no installable" in (selection.note or "")
 
 
@@ -241,28 +240,6 @@ def test_duplicate_appimage_assets_reject_the_release():
     ]
     selection = _selection([[duplicate]], "0.3.0")
     assert selection.kind is updates.SelectionKind.UP_TO_DATE
-    assert selection.newest_seen == Version("0.4.0")
-
-
-def test_pagination_cap_reports_incomplete():
-    full_page = [
-        _release_item(f"v0.3.{n}") for n in range(updates.RELEASES_PER_PAGE)
-    ]
-    pages = [full_page] * updates.MAX_RELEASE_PAGES
-    selection = updates.select_update(pages, Version("0.2.0"), "x86_64")
-    assert selection.kind is updates.SelectionKind.INCOMPLETE
-    assert selection.candidate is not None
-    assert "too long" in (selection.note or "")
-
-
-def test_pagination_cap_without_a_candidate_stays_incomplete():
-    old_page = [
-        _release_item(f"v0.1.{n}") for n in range(updates.RELEASES_PER_PAGE)
-    ]
-    pages = [old_page] * updates.MAX_RELEASE_PAGES
-    selection = updates.select_update(pages, Version("0.3.0"), "x86_64")
-    assert selection.kind is updates.SelectionKind.INCOMPLETE
-    assert selection.candidate is None
 
 
 def test_malformed_unrelated_tags_are_ignored_safely():
@@ -605,7 +582,6 @@ def test_cancel_stops_the_download_and_removes_staging(
     with qtbot.waitSignal(service.cancelled, timeout=10_000):
         service.cancel()
     assert len(cancelled) == 1
-    assert service._state is UpdateState.Idle
     assert service.is_busy() is False
 
 
@@ -1017,10 +993,7 @@ def test_translated_message_formats_after_translation(qtbot, fake_service, tmp_p
         qtbot, tmp_path, target, FAKE_CANDIDATE
     )
     release = _release(fake_service.base, b"x")
-    note = (
-        "The release list was too long to check completely; newer releases "
-        "may exist."
-    )
+    note = "Updating is recommended."
     coordinator._on_check_completed(
         updates.Selection(
             kind=updates.SelectionKind.AVAILABLE, candidate=release, note=note
@@ -1029,11 +1002,11 @@ def test_translated_message_formats_after_translation(qtbot, fake_service, tmp_p
     translated = {
         "Strom {available} is available; you are running {current}.":
             "Strom {available} disponible; usas {current}.",
-        note: "La lista de versiones es demasiado larga.",
+        note: "Se recomienda actualizar.",
     }
     assert coordinator.translated_message(translated.get) == (
         "Strom 0.4.0 disponible; usas 0.3.0.\n"
-        "La lista de versiones es demasiado larga."
+        "Se recomienda actualizar."
     )
 
 
@@ -1062,22 +1035,6 @@ def test_install_refused_when_another_window_holds_the_lock(
     assert blocks == [True, False]
     assert target.read_bytes() == b"old"
     holder.release()
-
-
-def test_check_reads_each_release_page_separately(qtbot, fake_service):
-    service = _local_service(fake_service.base)
-    service._config = ServiceConfig(
-        releases_url=f"{fake_service.base}/fixtures/releases", page_size=1,
-    )
-    fake_service.routes = {
-        "/fixtures/releases?per_page=1&page=1": (
-            200, json.dumps(_release_payload(fake_service.base, b"payload")).encode(),
-        ),
-        "/fixtures/releases?per_page=1&page=2": (200, b"[]"),
-    }
-    with qtbot.waitSignal(service.checkCompleted, timeout=3000) as result:
-        service.check_now()
-    assert result.args[0].candidate.version == Version("0.4.0")
 
 
 def test_check_then_download_can_recover_staged_transaction(

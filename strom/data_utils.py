@@ -123,6 +123,19 @@ def align_prices(prices: pd.Series,
     return out
 
 
+def _align_pair(temp_series: pd.Series,
+                price_series: pd.Series,
+                target: pd.DatetimeIndex,
+                weather_max_gap: pd.Timedelta,
+                price_max_fill: pd.Timedelta) -> pd.DataFrame:
+    """Align both sources to ``target`` and join them (inputs untouched)."""
+    aligned_temp = align_weather(temp_series, target, weather_max_gap)
+    aligned_price = align_prices(price_series, target, price_max_fill)
+    df = pd.concat([aligned_temp, aligned_price], axis=1)
+    df.columns = [TEMPERATURE_COLUMN, PRICE_COLUMN]
+    return df
+
+
 def join_data(temp_series: pd.Series,
               price_series: pd.Series,
               *,
@@ -141,12 +154,7 @@ def join_data(temp_series: pd.Series,
     start = min(temp.index.min(), price.index.min()).floor(freq)
     end = max(temp.index.max(), price.index.max()).ceil(freq)
     target = pd.date_range(start, end, freq=freq, tz=CANONICAL_TZ)
-
-    aligned_temp = align_weather(temp, target, weather_max_gap)
-    aligned_price = align_prices(price, target, price_max_fill)
-    df = pd.concat([aligned_temp, aligned_price], axis=1)
-    df.columns = [TEMPERATURE_COLUMN, PRICE_COLUMN]
-    return df
+    return _align_pair(temp, price, target, weather_max_gap, price_max_fill)
 
 
 def get_temp_price_df(
@@ -185,9 +193,6 @@ def get_temp_price_df(
         prices = get_price_series(zone=zone, end=target[-1],
                                   api_key=price_api_key)
 
-    aligned_temp = align_weather(weather, target, weather_max_gap)
-    aligned_price = align_prices(prices, target, price_max_fill)
-    df = pd.concat([aligned_temp, aligned_price], axis=1)
-    df.columns = [TEMPERATURE_COLUMN, PRICE_COLUMN]
+    df = _align_pair(weather, prices, target, weather_max_gap, price_max_fill)
     df.index.name = "Timestamp"
     return df

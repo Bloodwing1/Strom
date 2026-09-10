@@ -21,12 +21,12 @@ from typing import cast
 
 from PySide6 import QtCore, QtWidgets
 
+from strom.linux_gui.app import _ICON_SIZES
 from strom.linux_gui.setup_files import PLUG_CONFIG_KEY, TAPO_ENV_KEYS
 
 _CREDENTIAL_ENV_KEYS = (
     "WEATHER_API_KEY", "PRICE_API_KEY", PLUG_CONFIG_KEY,
 ) + TAPO_ENV_KEYS
-_ICON_SIZES = (32, 48, 64, 128, 256, 512)
 _CHILD_TIMEOUT_SECONDS = 90
 
 

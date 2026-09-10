@@ -68,6 +68,7 @@ class MainWindow(
         settings: QtCore.QSettings | None = None,
         spec_factory: SpecFactory | None = None,
         auto_update_check: bool = False,
+        update_service: UpdateService | None = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings if settings is not None else QtCore.QSettings()
@@ -80,14 +81,16 @@ class MainWindow(
         self._runner.outputText.connect(self._append_log)
 
         self._update_status = install_status()
-        self._update_service = UpdateService(
-            current=self._update_status.version,
-            arch=(
-                self._update_status.identity.arch
-                if self._update_status.identity is not None
-                else None
-            ),
-        )
+        if update_service is None:
+            update_service = UpdateService(
+                current=self._update_status.version,
+                arch=(
+                    self._update_status.identity.arch
+                    if self._update_status.identity is not None
+                    else None
+                ),
+            )
+        self._update_service = update_service
         self._updater = UpdateCoordinator(
             self,
             self._update_service,

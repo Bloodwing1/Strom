@@ -198,42 +198,10 @@ class RunPaneMixin(WindowBase):
         if not self._valid_location():
             self._open_setup()
             return
-        raw = self._config_dir_edit.text().strip()
-        if not raw:
-            self._set_detail(
-                self._translated("Choose a settings folder first."), error=True
-            )
-            return
-        try:
-            config_dir = Path(raw).expanduser().resolve()
-            if not config_dir.is_dir():
-                # First run with a not-yet-existing folder: creating it is
-                # the friendly behavior; saving keys would have created it
-                # already anyway.
-                config_dir.mkdir(parents=True, exist_ok=True)
-        except FileExistsError:
-            self._set_detail(
-                self._translated(
-                    "That path is an existing file, not a folder: {path}"
-                ).format(path=raw),
-                error=True,
-            )
-            return
-        except (OSError, RuntimeError) as exc:
-            self._set_detail(
-                self._translated(
-                    "Could not create the settings folder: {error}"
-                ).format(error=exc),
-                error=True,
-            )
-            return
-        if not config_dir.is_dir():
-            self._set_detail(
-                self._translated(
-                    "The settings folder is not a directory: {path}"
-                ).format(path=raw),
-                error=True,
-            )
+        config_dir = self._prepared_config_dir(
+            lambda text: self._set_detail(text, error=True)
+        )
+        if config_dir is None:
             return
         if confirm and not self._confirm_run():
             return

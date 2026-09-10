@@ -13,10 +13,8 @@ dependencies = [
     "beautifulsoup4>=4.13",
     "cvxpy>=1.6,<2",
     "entsoe-py>=0.6.18",
-    "matplotlib>=3.10",
     "numpy>=2.2",
     "pandas>=2.2",
-    "plotly>=6.0",
     "python-dotenv>=1.1",
     "python-kasa>=0.10.2",
     "Requests>=2.32",
@@ -71,7 +69,7 @@ markers = [
 source = ["strom"]
 # Optional GUI coverage is measured separately in the Qt-enabled CI job,
 # which also covers the updater modules in strom/linux_gui.
-omit = ["strom/plot_utils.py", "strom/linux_gui/*"]
+omit = ["strom/linux_gui/*"]
 
 [tool.mutmut]
 # The whole package is copied into the mutation sandbox so imports keep

@@ -12,8 +12,7 @@ The :class:`UpdateCoordinator` owns the explicit update states (kept
 separate from :class:`~strom.linux_gui.runner.RunnerState`) and the
 cycle/update interlock; verified staging files are handed to the
 transaction in :mod:`strom.linux_gui.update_install`. Update states:
-Idle, Checking, Available, Downloading, Verifying, Installing, Restarting,
-Failed.
+Idle, Checking, Available, Downloading, Installing, Restarting, Failed.
 
 The repository is fixed to Bloodwing1/Strom; release text is untrusted and
 never used for repository, command or destination values. HTTPS with
@@ -32,7 +31,7 @@ import sys
 import tempfile
 import threading
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -128,7 +127,6 @@ class UpdateState(enum.Enum):
     Checking = "Checking"
     Available = "Available"
     Downloading = "Downloading"
-    Verifying = "Verifying"
     Installing = "Installing"
     Restarting = "Restarting"
     Failed = "Failed"
@@ -140,7 +138,6 @@ class ServiceConfig:
 
     releases_url: str = API_RELEASES_URL
     page_size: int = release_selection.RELEASES_PER_PAGE
-    max_pages: int = release_selection.MAX_RELEASE_PAGES
     request_timeout_ms: int = REQUEST_TIMEOUT_MS
     download_timeout_ms: int = DOWNLOAD_TIMEOUT_MS
     metadata_max_bytes: int = METADATA_MAX_BYTES
@@ -262,7 +259,6 @@ def _cleaned_restart_environment() -> QProcessEnvironment:
 class UpdateService(QObject):
     """One network operation at a time; no widgets, no filesystem writes."""
 
-    stateChanged = Signal(object)
     checkCompleted = Signal(object)
     checkFailed = Signal(str)
     downloadProgress = Signal(int, int)
@@ -289,8 +285,6 @@ class UpdateService(QObject):
         self._reply: QNetworkReply | None = None
         self._token = 0
         self._role = ""
-        self._state = UpdateState.Idle
-        self._pages: list[list[Mapping[str, object]]] = []
         self._metadata = bytearray()
         self._release: ReleaseInfo | None = None
         self._staging_path: Path | None = None
@@ -322,14 +316,12 @@ class UpdateService(QObject):
     # --- operations ---
 
     def check_now(self) -> bool:
-        """Start one paginated release check; False when already busy."""
+        """Start one release check; False when already busy."""
         if self._reply is not None:
             return False
-        self._pages = []
         self._metadata.clear()
         self._token += 1
-        self._set_state(UpdateState.Checking)
-        self._request_page(1)
+        self._request_page()
         return True
 
     def download(self, release: ReleaseInfo, target: Path) -> bool:
@@ -337,7 +329,6 @@ class UpdateService(QObject):
         if self._reply is not None:
             return False
         if release.appimage is None or release.checksums is None:
-            self._set_state(UpdateState.Idle)
             self.downloadFailed.emit(_STABLE_URL_MESSAGE)
             return False
         if not self._policy.asset_url_allowed(
@@ -345,7 +336,6 @@ class UpdateService(QObject):
         ) or not self._policy.asset_url_allowed(
             release.checksums.url, release.tag, release.checksums.name
         ):
-            self._set_state(UpdateState.Idle)
             self.downloadFailed.emit(_STABLE_URL_MESSAGE)
             return False
         self._release = release
@@ -362,12 +352,10 @@ class UpdateService(QObject):
                 dir=target.parent,
             )
         except OSError as exc:
-            self._set_state(UpdateState.Idle)
             self.downloadFailed.emit(f"could not create the staging file: {exc}")
             return False
         self._staging_fd = fd
         self._staging_path = Path(raw)
-        self._set_state(UpdateState.Downloading)
         self._watchdog.start(self._config.download_timeout_ms)
         self._role = "asset"
         self._start(release.appimage.url)
@@ -381,23 +369,16 @@ class UpdateService(QObject):
         self._watchdog.stop()
         self._finish_reply()
         self._discard_staging()
-        self._set_state(UpdateState.Idle)
         self.cancelled.emit()
         return True
 
     # --- internals ---
 
-    def _set_state(self, state: UpdateState) -> None:
-        if state is self._state:
-            return
-        self._state = state
-        self.stateChanged.emit(state)
-
-    def _request_page(self, number: int) -> None:
+    def _request_page(self) -> None:
         self._role = "check"
         url = (
             f"{self._config.releases_url}"
-            f"?per_page={self._config.page_size}&page={number}"
+            f"?per_page={self._config.page_size}&page=1"
         )
         self._start(url)
 
@@ -519,21 +500,13 @@ class UpdateService(QObject):
         if not isinstance(parsed, list):
             self._fail("GitHub returned an unexpected release-list format")
             return
-        self._pages.append(parsed)
-        complete = len(parsed) < self._config.page_size
-        capped = len(self._pages) >= self._config.max_pages
-        if complete or capped:
-            if self._current is None:
-                self._fail("the installed version could not be read")
-                return
-            selection = release_selection.select_update(
-                self._pages, self._current, self._arch
-            )
-            self._set_state(UpdateState.Idle)
-            self.checkCompleted.emit(selection)
-        else:
-            self._token += 1
-            self._request_page(len(self._pages) + 1)
+        if self._current is None:
+            self._fail("the installed version could not be read")
+            return
+        selection = release_selection.select_update(
+            parsed, self._current, self._arch
+        )
+        self.checkCompleted.emit(selection)
 
     def _finish_asset(self) -> None:
         assert self._staging_fd is not None and self._hasher is not None
@@ -549,7 +522,6 @@ class UpdateService(QObject):
             self._fail("the release metadata no longer contains this AppImage")
             return
         self._token += 1
-        self._set_state(UpdateState.Verifying)
         self._role = "sums"
         self._start(release.checksums.url)
 
@@ -578,7 +550,6 @@ class UpdateService(QObject):
             size=self._expected_size,
             sha256=actual,
         )
-        self._set_state(UpdateState.Idle)
         self.downloadPrepared.emit(prepared)
 
     def _on_timeout(self) -> None:
@@ -606,7 +577,6 @@ class UpdateService(QObject):
             self._staging_fd = None
         self._role = ""
         self._metadata.clear()
-        self._pages = []
 
     def _fail(self, message: str) -> None:
         checking = self._role == "check"
@@ -614,7 +584,6 @@ class UpdateService(QObject):
         self._watchdog.stop()
         self._finish_reply()
         self._discard_staging()
-        self._set_state(UpdateState.Idle)
         if checking:
             self.checkFailed.emit(message)
         else:
@@ -807,28 +776,6 @@ class UpdateCoordinator(QObject):
         """True while a heating cycle is starting or running."""
         return self._hooks.is_cycle_active()
 
-    def swap_service(self, service: UpdateService) -> None:
-        """Point the coordinator at another service (used by tests)."""
-        old, self._service = self._service, service
-        for signal, handler in (
-            (old.checkCompleted, self._on_check_completed),
-            (old.checkFailed, self._on_check_failed),
-            (old.downloadPrepared, self._on_prepared),
-            (old.downloadFailed, self._on_download_failed),
-            (old.cancelled, self._on_cancelled),
-            (old.downloadProgress, self.downloadProgress),
-        ):
-            try:
-                signal.disconnect(handler)
-            except (RuntimeError, TypeError):
-                pass
-        service.checkCompleted.connect(self._on_check_completed)
-        service.checkFailed.connect(self._on_check_failed)
-        service.downloadPrepared.connect(self._on_prepared)
-        service.downloadFailed.connect(self._on_download_failed)
-        service.cancelled.connect(self._on_cancelled)
-        service.downloadProgress.connect(self.downloadProgress)
-
     def download_received(self) -> int:
         """Bytes received so far in the current download."""
         return self._service.received
@@ -851,7 +798,6 @@ class UpdateCoordinator(QObject):
         """Run one release check; manual failures are explained in ``message``."""
         if self._phase is not None or self._state in (
             UpdateState.Downloading,
-            UpdateState.Verifying,
             UpdateState.Installing,
             UpdateState.Restarting,
         ):
@@ -873,7 +819,6 @@ class UpdateCoordinator(QObject):
         """The explicit user consent: download, verify, install, restart."""
         if self._phase is not None or self._state in (
             UpdateState.Downloading,
-            UpdateState.Verifying,
             UpdateState.Installing,
             UpdateState.Restarting,
         ):
@@ -1021,7 +966,7 @@ class UpdateCoordinator(QObject):
         self._settle_failed(restore=False, detail=f"download failed: {message}")
 
     def _on_cancelled(self) -> None:
-        if self._state in (UpdateState.Downloading, UpdateState.Verifying):
+        if self._state is UpdateState.Downloading:
             self._set_state(UpdateState.Idle)
             self._hooks.set_run_block(False)
             self._set_message("Update download cancelled.")

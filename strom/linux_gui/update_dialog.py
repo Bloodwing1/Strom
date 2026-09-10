@@ -128,7 +128,7 @@ class UpdateDialog(QtWidgets.QDialog):
             str(candidate.version) if candidate is not None else "—"
         )
         state = coordinator.state
-        downloading = state in (UpdateState.Downloading, UpdateState.Verifying)
+        downloading = state is UpdateState.Downloading
         installing = state in (UpdateState.Installing, UpdateState.Restarting)
         self._progress.setVisible(downloading)
         self._progress_label.setVisible(downloading)

@@ -210,20 +210,6 @@ SPANISH.update({
         "Strom {available} está disponible; estás usando {current}."
     ),
     (
-        "The release list was too long to check completely; newer releases "
-        "may exist."
-    ): (
-        "La lista de versiones es demasiado larga para comprobarla por "
-        "completo; puede haber versiones más nuevas."
-    ),
-    (
-        "The release list was too long to check completely, so this cannot "
-        "prove the app is current."
-    ): (
-        "La lista de versiones es demasiado larga para comprobarla por "
-        "completo, así que esto no demuestra que la aplicación esté al día."
-    ),
-    (
         "A newer release ({newest}) was found, but it has no installable "
         "AppImage asset for this architecture."
     ): (
@@ -366,13 +352,6 @@ SPANISH.update({
     ): (
         "Pulsa Probar para verificar el enchufe y continúa."
     ),
-    (
-        "Enter both the Tapo email and the password, or leave both empty and "
-        "test the plug without an account."
-    ): (
-        "Introduce el correo y la contraseña de Tapo, o deja ambos vacíos y "
-        "prueba el enchufe sin cuenta."
-    ),
     "Start heating for the next hour": "Empezar a calentar durante la próxima hora",
     "Start heating": "Empezar a calentar",
     "Plan ahead (hours):": "Planificar con antelación (horas):",
@@ -431,11 +410,6 @@ SPANISH.update({
         "Could not save the plug details: {error}"
     ): (
         "No se pudieron guardar los datos del enchufe: {error}"
-    ),
-    (
-        "Could not create the settings folder: {error}"
-    ): (
-        "No se pudo crear la carpeta de configuración: {error}"
     ),
     (
         "The settings folder is not a directory: {path}"
@@ -507,16 +481,6 @@ SPANISH.update({
         "El token de ENTSO-E está vacío; pégalo e inténtalo de nuevo."
     ),
     (
-        "The plug account email is empty; paste it and try again."
-    ): (
-        "El correo de la cuenta del enchufe está vacío; pégalo e inténtalo de nuevo."
-    ),
-    (
-        "The plug account password is empty; paste it and try again."
-    ): (
-        "La contraseña de la cuenta del enchufe está vacía; pégala e inténtalo de nuevo."
-    ),
-    (
         "The plug IP address is empty; paste it and try again."
     ): (
         "La dirección IP del enchufe está vacía; pégala e inténtalo de nuevo."
@@ -535,20 +499,6 @@ SPANISH.update({
         "sin saltos de línea."
     ),
     (
-        "The plug account email must be a single line; re-copy it without "
-        "line breaks."
-    ): (
-        "El correo de la cuenta del enchufe debe ocupar una sola línea; "
-        "vuelve a copiarlo sin saltos de línea."
-    ),
-    (
-        "The plug account password must be a single line; re-copy it without "
-        "line breaks."
-    ): (
-        "La contraseña de la cuenta del enchufe debe ocupar una sola línea; "
-        "vuelve a copiarla sin saltos de línea."
-    ),
-    (
         "The plug IP address must be a single line; re-copy it without line "
         "breaks."
     ): (
@@ -561,17 +511,6 @@ SPANISH.update({
     ): (
         "'{value}' no parece una dirección IP. La aplicación Tapo la muestra "
         "en la información del dispositivo."
-    ),
-    (
-        "Strom cannot store these plug details safely in tapologin.env "
-        "(python-dotenv cannot read back this combination of characters). "
-        "Please change the password, or set EMAIL, PASSWORD, and DEVICEIP "
-        "as environment variables instead."
-    ): (
-        "Strom no puede guardar estos datos del enchufe de forma segura en "
-        "tapologin.env (python-dotenv no puede volver a leer esta combinación "
-        "de caracteres). Cambia la contraseña o define EMAIL, PASSWORD y "
-        "DEVICEIP como variables de entorno."
     ),
 })
 
@@ -665,5 +604,57 @@ SPANISH.update({
         "actualización en el sitio no está disponible. Mueve Strom a una "
         "carpeta con permisos de escritura o actualízalo desde la página de "
         "versiones."
+    ),
+    (
+        "<html><head/><body><p>Strom uses the free <b>OpenWeatherMap</b> "
+        "service for the weather forecast.</p><ol><li>Open "
+        '<a href="https://openweathermap.org/api">openweathermap.org/api</a> '
+        "and click <b>Sign up</b> (free).</li><li>After signing in, open "
+        "<b>API keys</b> under your account name.</li><li>Copy the key (a "
+        "long code) and paste it into the box, then click <b>Save</b>.</li>"
+        "</ol></body></html>"
+    ): (
+        "<p>Strom usa OpenWeatherMap para la previsión del tiempo.</p>"
+        "<ol><li>Abre https://openweathermap.org/api y crea una cuenta "
+        "gratuita.</li><li>Abre API keys en tu cuenta.</li>"
+        "<li>Copia la clave, pégala aquí y pulsa Guardar clave del "
+        "tiempo.</li></ol>"
+    ),
+    (
+        "<html><head/><body><p>Strom uses the <b>ENTSO-E Transparency "
+        "Platform</b> for European electricity prices.</p><ol><li>Open "
+        '<a href="https://transparency.entsoe.eu">transparency.entsoe.eu</a> '
+        "and create a free account.</li><li>Request a Web API token as "
+        "described on the platform; the token is sent to you by email.</li>"
+        "<li>Paste the token into the box, then click <b>Save</b>.</li>"
+        "</ol></body></html>"
+    ): (
+        "<p>Strom usa ENTSO-E Transparency Platform para los precios.</p>"
+        "<ol><li>Crea una cuenta gratuita en "
+        "https://transparency.entsoe.eu.</li><li>Solicita un token de Web API "
+        "siguiendo las instrucciones del servicio; lo recibirás por "
+        "correo.</li><li>Pégalo aquí y pulsa Guardar token de precios.</li>"
+        "</ol>"
+    ),
+    (
+        "These are the login details for your TP-Link Tapo account — the "
+        "email and password you use in the Tapo phone app for the smart plug "
+        "your heater is connected to. You only need the account if the plug "
+        "asks for it; many newer plugs work without one. The IP address is "
+        "shown in the Tapo app: tap your plug, then the gear icon, then look "
+        "under device information."
+    ): (
+        "Introduce el correo y la contraseña que usas en la aplicación Tapo "
+        "para el enchufe de tu calefactor. Solo necesitas la cuenta si el "
+        "enchufe la pide; muchos enchufes recientes funcionan sin ella. "
+        "Para ver la dirección IP, abre el enchufe en Tapo y busca la "
+        "información del dispositivo en sus ajustes."
+    ),
+    (
+        "How far ahead Strom plans, in hours. This does not make the run "
+        "take longer. 24 hours is a good default."
+    ): (
+        "Cuántas horas planifica Strom por adelantado. Esto no alarga la "
+        "ejecución. Se recomiendan 24 horas."
     ),
 })

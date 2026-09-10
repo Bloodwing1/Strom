@@ -9,6 +9,13 @@ from __future__ import annotations
 from strom.linux_gui.runner import RunnerState
 from strom.linux_gui.setup_files import PRICE_FILE, TAPO_FILE, WEATHER_FILE
 
+
+def city_is_valid(text: str) -> bool:
+    """A city name is usable when it is non-blank and a single line."""
+    cleaned = text.strip()
+    return bool(cleaned) and not any(c in cleaned for c in ",;\n\r")
+
+
 _LOG_LEVELS = ("INFO", "WARNING", "ERROR")
 _DEFAULT_HORIZON = 24
 _MIN_HORIZON = 2

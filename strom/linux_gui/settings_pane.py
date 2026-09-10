@@ -15,6 +15,7 @@ from strom.linux_gui.ui_text import (
     _LOG_LEVELS,
     _MAX_HORIZON,
     _MIN_HORIZON,
+    city_is_valid,
 )
 from strom.linux_gui.window_base import WindowBase
 
@@ -88,7 +89,7 @@ class SettingsPaneMixin(WindowBase):
 
     def _restore_settings(self) -> None:
         city = self._settings.value("city", "Barcelona")
-        if isinstance(city, str) and city.strip() and not any(c in city for c in ",;\n\r"):
+        if isinstance(city, str) and city_is_valid(city):
             self._city.setCurrentText(city.strip())
         language = self._settings.value("language", "en")
         self._language.setCurrentIndex(1 if language == "es" else 0)
@@ -139,7 +140,6 @@ class SettingsPaneMixin(WindowBase):
         )
         if self._valid_location():
             self._settings.setValue("city", self._city.currentText().strip())
-        self._settings.setValue("country", "ES")
         self._settings.setValue("language", self._language.currentData())
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.sync()

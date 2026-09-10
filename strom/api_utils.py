@@ -15,8 +15,7 @@ from __future__ import annotations
 import os
 import time
 import warnings
-from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import pandas as pd
 import requests
@@ -24,10 +23,10 @@ from bs4 import XMLParsedAsHTMLWarning
 from entsoe import EntsoePandasClient
 
 from .errors import (
-    ConfigurationError,
     PriceProviderError,
     StromError,
     WeatherProviderError,
+    scrub,
 )
 from entsoe.exceptions import NoMatchingDataError
 
@@ -45,14 +44,6 @@ BACKOFF_SECONDS = 2.0
 
 #: HTTP statuses considered transient (rate limiting / server trouble).
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-
-
-def _scrub(message: str, *secrets: Optional[str]) -> str:
-    """Remove credential material from error messages."""
-    for secret in secrets:
-        if secret:
-            message = message.replace(secret, "***")
-    return message
 
 
 def _is_transient_http(exc: Exception) -> bool:
@@ -86,56 +77,11 @@ def _retry_loop(
             sleep(backoff_seconds * (2 ** attempt))
 
 
-def find_config_file(name: str) -> Path:
-    """Locate a file in the Strom config directory without side effects.
+def _required_api_key(env_var: str, file_name: str, purpose: str) -> str:
+    """Env var first, then the resolved config directory (lazy import)."""
+    from .config import load_api_key
 
-    Uses the single config-directory resolution in :mod:`strom.config`
-    (``$STROM_CONFIG_DIR`` first, then a ``config/`` folder next to any
-    parent of the current working directory). Never calls ``os.chdir``.
-    """
-    env_dir = os.getenv("STROM_CONFIG_DIR")
-    if env_dir:
-        return Path(env_dir) / name
-    from .config import DEFAULT_CONFIG_DIRNAME, resolve_config_dir
-    from .errors import ConfigurationError
-    try:
-        return resolve_config_dir() / name
-    except ConfigurationError:
-        return Path.cwd() / DEFAULT_CONFIG_DIRNAME / name
-
-
-def get_weather_api_key(config_dir: Path | None = None) -> str:
-    api_key = os.getenv('WEATHER_API_KEY')
-    if api_key and api_key.strip():
-        return api_key.strip()
-
-    path = (config_dir / 'weather_api_key.txt') if config_dir \
-        else find_config_file('weather_api_key.txt')
-    if path.is_file():
-        key = path.read_text().strip()
-        if key:
-            return key
-    raise ConfigurationError(
-        f"No weather API key found; set WEATHER_API_KEY or create "
-        f"{path} with the key."
-    )
-
-
-def get_price_api_key(config_dir: Path | None = None) -> str:
-    api_key = os.getenv('PRICE_API_KEY')
-    if api_key and api_key.strip():
-        return api_key.strip()
-
-    path = (config_dir / 'price_api_key.txt') if config_dir \
-        else find_config_file('price_api_key.txt')
-    if path.is_file():
-        key = path.read_text().strip()
-        if key:
-            return key
-    raise ConfigurationError(
-        f"No electricity price API key found; set PRICE_API_KEY or create "
-        f"{path} with the key."
-    )
+    return load_api_key(None, env_var, file_name, purpose)
 
 
 def _validate_weather_payload(payload, city: str) -> list[dict]:
@@ -180,11 +126,13 @@ def get_weather_data(city: str = "Barcelona, ES",
             bounded retries, authentication problems, and malformed or empty
             responses. Messages never contain the API key.
     """
-    api_key = api_key or get_weather_api_key()
+    api_key = api_key or _required_api_key(
+        "WEATHER_API_KEY", "weather_api_key.txt", "weather API key"
+    )
     params = {"q": city, "appid": api_key}
 
     def on_error(exc: Exception, transient: bool) -> Exception:
-        detail = _scrub(str(exc), api_key)
+        detail = scrub(str(exc), api_key)
         if transient:
             return WeatherProviderError(
                 f"Weather provider unavailable for {city!r} after "
@@ -253,15 +201,19 @@ def get_spain_electricity_prices(
     if end is None:
         end = start + pd.Timedelta(hours=26)
 
-    api_key = api_key or os.getenv('PRICE_API_KEY')
+    # Read the configured key even when a client is injected: it is the
+    # credential that error messages must scrub.
+    api_key = api_key or os.getenv("PRICE_API_KEY")
     if client is None:
-        api_key = api_key or get_price_api_key()
+        api_key = api_key or _required_api_key(
+            "PRICE_API_KEY", "price_api_key.txt", "electricity price API key"
+        )
         client = EntsoePandasClient(api_key=api_key,
                                     timeout=PRICE_TIMEOUT_SECONDS,
                                     retry_count=1)
 
     def on_error(exc: Exception, transient: bool) -> Exception:
-        detail = _scrub(str(exc), api_key)
+        detail = scrub(str(exc), api_key)
         if isinstance(exc, NoMatchingDataError):
             return PriceProviderError(
                 f"No day-ahead prices are published for zone {zone!r} "

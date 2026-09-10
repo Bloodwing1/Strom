@@ -45,7 +45,6 @@ def build_controller_deps(config: AppConfig,
         fetch_data=fetch_data,
         clock=SystemClock(),
         interval_seconds=config.house.dt_hours * 3600.0,
-        horizon_hours=horizon_hours,
     )
 
 

@@ -17,6 +17,7 @@ One loader, deterministic behavior:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -38,10 +39,9 @@ HOUSE_CONFIG_FILE = "house_config.json"
 WEATHER_KEY_FILE = "weather_api_key.txt"
 PRICE_KEY_FILE = "price_api_key.txt"
 
-HOUSE_CONFIG_KEYS = frozenset({
-    "C_air", "C_wall", "R_interior", "R_exterior", "Q_heater", "Q_cooling",
-    "T_min", "T_max", "T_interior_init", "T_wall_init", "P_base", "freq",
-})
+#: Exactly the parameters :class:`House` accepts; kept in sync by deriving
+#: them from its signature instead of restating the list here.
+HOUSE_CONFIG_KEYS = frozenset(inspect.signature(House).parameters)
 
 
 @dataclass(frozen=True)
@@ -185,13 +185,17 @@ def load_house_params(config_dir: Path) -> dict:
     return params
 
 
-def load_api_key(config_dir: Path, env_var: str, file_name: str,
+def load_api_key(config_dir: Path | None, env_var: str, file_name: str,
                  purpose: str) -> str:
-    """Load an API key from the environment or the config directory."""
+    """Load an API key from the environment or the config directory.
+
+    ``config_dir=None`` resolves the directory lazily, so an exported key
+    works even when no config directory exists.
+    """
     key = os.getenv(env_var)
     if key and key.strip():
         return key.strip()
-    path = config_dir / file_name
+    path = (config_dir or resolve_config_dir()) / file_name
     if path.is_file():
         key = path.read_text().strip()
         if key:

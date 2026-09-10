@@ -9,9 +9,7 @@ Channel rule (proposed product default, documented in tests and UI help):
 stable installations follow stable releases only; prerelease installations
 also follow newer prereleases. Downgrades are never offered. A release
 missing or duplicating its required assets cannot be installed but is still
-counted when finding the newest published version. Pagination uses a
-defined cap; when the cap prevents a complete result the outcome says so
-instead of claiming the app is current.
+counted when finding the newest published version.
 """
 
 from __future__ import annotations
@@ -36,7 +34,6 @@ DOWNLOAD_HOSTS = (
     "objects.githubusercontent.com",
     "release-assets.githubusercontent.com",
 )
-MAX_RELEASE_PAGES = 5
 RELEASES_PER_PAGE = 100
 CHECKSUMS_ASSET_NAME = "SHA256SUMS"
 
@@ -157,21 +154,18 @@ class SelectionKind(enum.Enum):
 
     UP_TO_DATE = "up to date"
     AVAILABLE = "available"
-    INCOMPLETE = "incomplete"
 
 
 @dataclass(frozen=True)
 class Selection:
     """The result of comparing published releases with the running version.
 
-    ``kind`` is INCOMPLETE when the pagination cap may have hidden newer
-    releases — that is never reported as an up-to-date result — and carries
-    an installable candidate whenever one was found.
+    ``kind`` is UP_TO_DATE when no installable candidate is strictly newer,
+    and ``note`` explains a newer release that had no usable asset.
     """
 
     kind: SelectionKind
     candidate: ReleaseInfo | None = None
-    newest_seen: Version | None = None
     note: str | None = None
 
 
@@ -185,31 +179,23 @@ def is_newer(candidate: Version, current: Version) -> bool:
 
 
 def select_update(
-    pages: Sequence[Sequence[Mapping[str, object]]],
+    releases: Sequence[Mapping[str, object]],
     current: Version,
     arch: str | None,
 ) -> Selection:
-    """Pick the update offer from already-fetched release pages.
+    """Pick the update offer from an already-fetched release list.
 
-    Pure function: the caller fetches pages and passes them in. A hit must
-    be strictly newer under the channel rule; equal or older tags never
-    produce an offer, and a pagination cap that leaves the list incomplete
-    is reported instead of being read as "up to date".
+    Pure function: the caller fetches the releases and passes them in. A hit
+    must be strictly newer under the channel rule; equal or older tags never
+    produce an offer.
     """
     parsed = [
         release
-        for page in pages
-        for item in page
+        for item in releases
         if isinstance(item, Mapping)
         for release in (parse_release(item, arch),)
         if release is not None
     ]
-    newest_seen = max((entry.version for entry in parsed), default=None)
-    incomplete = (
-        bool(pages)
-        and len(pages) >= MAX_RELEASE_PAGES
-        and len(pages[-1]) >= RELEASES_PER_PAGE
-    )
     candidates = [
         entry for entry in parsed if entry.is_installable and is_newer(entry.version, current)
     ]
@@ -219,31 +205,12 @@ def select_update(
         default=None,
     )
     if best is not None:
-        return Selection(
-            kind=SelectionKind.INCOMPLETE if incomplete else SelectionKind.AVAILABLE,
-            candidate=best,
-            newest_seen=newest_seen,
-            note=(
-                "The release list was too long to check completely; newer "
-                "releases may exist."
-            )
-            if incomplete
-            else None,
-        )
+        return Selection(kind=SelectionKind.AVAILABLE, candidate=best)
+    newest_seen = max((entry.version for entry in parsed), default=None)
     note = None
-    if incomplete:
-        note = (
-            "The release list was too long to check completely, so this "
-            "cannot prove the app is current."
-        )
-    elif newest_seen is not None and newest_seen > current:
+    if newest_seen is not None and newest_seen > current:
         note = (
             f"A newer release ({newest_seen}) was found, but it has no "
             "installable AppImage asset for this architecture."
         )
-    return Selection(
-        kind=SelectionKind.INCOMPLETE if incomplete else SelectionKind.UP_TO_DATE,
-        candidate=None,
-        newest_seen=newest_seen,
-        note=note,
-    )
+    return Selection(kind=SelectionKind.UP_TO_DATE, candidate=None, note=note)

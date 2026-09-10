@@ -10,6 +10,23 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PySide6 import QtGui
+
+_ICON_SIZES = (32, 48, 64, 128, 256, 512)
+
+
+def app_icon() -> QtGui.QIcon:
+    """The application and tray icon, built from the bundled PNG sizes."""
+    from PySide6 import QtGui
+
+    icon = QtGui.QIcon()
+    assets = Path(__file__).with_name("assets")
+    for size in _ICON_SIZES:
+        icon.addFile(str(assets / f"strom-{size}.png"))
+    return icon
 
 
 def run() -> int:
@@ -26,18 +43,14 @@ def run() -> int:
         print("Install it with: python -m pip install 'strom[gui]'", file=sys.stderr)
         return 2
 
-    from PySide6 import QtGui, QtWidgets
+    from PySide6 import QtWidgets
 
     app = QtWidgets.QApplication(sys.argv)
     # Stable names must be set before any QSettings object is constructed.
     app.setOrganizationName("Strom")
     app.setApplicationName("Strom")
     app.setDesktopFileName("strom")
-    icon = QtGui.QIcon()
-    assets = Path(__file__).with_name("assets")
-    for size in (32, 48, 64, 128, 256, 512):
-        icon.addFile(str(assets / f"strom-{size}.png"))
-    app.setWindowIcon(icon)
+    app.setWindowIcon(app_icon())
 
     from strom.linux_gui.window import MainWindow
 

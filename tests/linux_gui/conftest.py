@@ -36,7 +36,6 @@ class _FakeRouteHandler(http.server.BaseHTTPRequestHandler):
         if delay is not None:
             time.sleep(delay)
         route = _FakeRouteHandler.routes.get(self.path)
-        print('SERVER PATH:', self.path, 'ROUTES:', list(_FakeRouteHandler.routes))
         if route is None:
             self.send_error(404)
             return

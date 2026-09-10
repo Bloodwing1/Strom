@@ -60,10 +60,6 @@ class FileLock:
         self._path = path
         self._fd: int | None = None
 
-    @property
-    def path(self) -> Path:
-        return self._path
-
     def is_held(self) -> bool:
         return self._fd is not None
 
@@ -216,8 +212,6 @@ class Transaction:
     """Everything the coordinator needs between the durable steps."""
 
     target: AppImageIdentity
-    release: ReleaseInfo
-    staging: Path
     backup: Path
 
 
@@ -278,7 +272,7 @@ def prepare_transaction(
         except OSError:
             pass
         raise
-    return Transaction(target=target, release=release, staging=staging, backup=backup)
+    return Transaction(target=target, backup=backup)
 
 
 def commit_replacement(target: AppImageIdentity, staging: Path, backup: Path) -> None:

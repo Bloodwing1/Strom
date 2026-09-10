@@ -16,12 +16,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from strom.linux_gui.runner import CycleRunner, LaunchSpec
 from strom.linux_gui.setup_check import SetupChecker
 from strom.linux_gui.setup_files import SetupStatus
-from strom.linux_gui.ui_text import (
-    _HORIZON_HELP_TEXT,
-    _PRICE_HELP_TEXT,
-    _TAPO_HELP_TEXT,
-    _WEATHER_HELP_TEXT,
-)
 from strom.linux_gui.update_service import UpdateCoordinator
 from strom.plug import PlugCredentials
 
@@ -66,33 +60,46 @@ class WindowBase(QtWidgets.QMainWindow):
         from strom.linux_gui.translations import SPANISH
         if self._language.currentData() != "es":
             return text
-        help_texts = {
-            _WEATHER_HELP_TEXT: (
-                "<p>Strom usa OpenWeatherMap para la previsión del tiempo.</p>"
-                "<ol><li>Abre https://openweathermap.org/api y crea una cuenta gratuita.</li>"
-                "<li>Abre API keys en tu cuenta.</li>"
-                "<li>Copia la clave, pégala aquí y pulsa Guardar clave del tiempo.</li></ol>"
-            ),
-            _PRICE_HELP_TEXT: (
-                "<p>Strom usa ENTSO-E Transparency Platform para los precios.</p>"
-                "<ol><li>Crea una cuenta gratuita en https://transparency.entsoe.eu.</li>"
-                "<li>Solicita un token de Web API siguiendo las instrucciones del servicio; "
-                "lo recibirás por correo.</li><li>Pégalo aquí y pulsa Guardar token "
-                "de precios.</li></ol>"
-            ),
-            _TAPO_HELP_TEXT: (
-                "Introduce el correo y la contraseña que usas en la aplicación Tapo "
-                "para el enchufe de tu calefactor. Solo necesitas la cuenta si el "
-                "enchufe la pide; muchos enchufes recientes funcionan sin ella. "
-                "Para ver la dirección IP, abre el enchufe en Tapo y busca la "
-                "información del dispositivo en sus ajustes."
-            ),
-            _HORIZON_HELP_TEXT: (
-                "Cuántas horas planifica Strom por adelantado. Esto no alarga la "
-                "ejecución. Se recomiendan 24 horas."
-            ),
-        }
-        return help_texts.get(text, SPANISH.get(text, text))
+        return SPANISH.get(text, text)
+
+    def _prepared_config_dir(
+        self, report_error: Callable[[str], None]
+    ) -> Path | None:
+        """Resolve the settings folder, creating it when it does not exist.
+
+        Every failure is reported through ``report_error`` with a message
+        that is already translated; the caller decides where to show it.
+        """
+        raw = self._config_dir_edit.text().strip()
+        if not raw:
+            report_error(self._translated("Choose a settings folder first."))
+            return None
+        try:
+            config_dir = Path(raw).expanduser().resolve()
+            if not config_dir.is_dir():
+                config_dir.mkdir(parents=True, exist_ok=True)
+        except FileExistsError:
+            report_error(
+                self._translated(
+                    "That path is an existing file, not a folder: {path}"
+                ).format(path=raw)
+            )
+            return None
+        except (OSError, RuntimeError) as exc:
+            report_error(
+                self._translated(
+                    "Could not use the settings folder: {error}"
+                ).format(error=exc)
+            )
+            return None
+        if not config_dir.is_dir():
+            report_error(
+                self._translated(
+                    "The settings folder is not a directory: {path}"
+                ).format(path=raw)
+            )
+            return None
+        return config_dir
 
     def _refresh_controls(self) -> None:
         raise NotImplementedError

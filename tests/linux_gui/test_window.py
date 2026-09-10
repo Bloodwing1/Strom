@@ -344,7 +344,7 @@ def test_checklist_turns_ready_after_all_saves(make_window, tmp_path):
     from strom.linux_gui.setup_files import save_tapo_credentials
 
     save_tapo_credentials(
-        config_dir, "", "", "192.168.1.42",
+        config_dir, "192.168.1.42",
         plug_config='{"host": "192.168.1.42", "credentials_hash": "abc"}',
     )
     window._refresh_setup_status()
@@ -484,7 +484,7 @@ def test_path_resolution_error_blocks_confirmation(make_window, monkeypatch):
     assert confirmed == []
     assert window._runner.state is RunnerState.Idle
     assert window._status_detail.text() == (
-        "Could not create the settings folder: symlink loop"
+        "Could not use the settings folder: symlink loop"
     )
 
 
@@ -876,7 +876,7 @@ def test_wizard_saves_and_moves_one_account_at_a_time(make_window, tmp_path):
     from strom.linux_gui.setup_files import save_tapo_credentials
 
     save_tapo_credentials(
-        tmp_path / "accounts", "", "", "192.168.1.42",
+        tmp_path / "accounts", "192.168.1.42",
         plug_config='{"host": "192.168.1.42", "credentials_hash": "abc"}',
     )
     window._refresh_setup_status()
@@ -1073,7 +1073,8 @@ def test_update_dialog_release_page_uses_the_clean_opener(
 def test_manual_check_failure_is_explained_in_dialog(
     qtbot, make_window, fake_service
 ):
-    window = make_window()
+    from strom.linux_gui.app_identity import install_status
+
     fake_service.routes = {
         "/fixtures/releases?per_page=100&page=1": (404, b"no"),
     }
@@ -1085,11 +1086,10 @@ def test_manual_check_failure_is_explained_in_dialog(
             asset_prefix="/fixtures/download/",
             scheme="http",
         ),
-        current=window._update_status.version,
+        current=install_status().version,
         arch=None,
     )
-    window._update_service = service
-    window._updater.swap_service(service)
+    window = make_window(update_service=service)
     window._check_updates_action.trigger()
     dialog = window._update_dialog
     qtbot.waitUntil(

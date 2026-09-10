@@ -18,7 +18,7 @@ import pandas as pd
 from PySide6.QtCore import QObject, Signal, SignalInstance
 
 from strom.api_utils import get_price_series, get_weather_data
-from strom.errors import DeviceError, StromError
+from strom.errors import DeviceError, StromError, scrub
 from strom.plug import PlugCredentials, connect_plug
 
 #: Stable message the GUI translates when a plug wants the account.
@@ -79,7 +79,7 @@ class SetupChecker(QObject):
     def check_weather(self, api_key: str, city: str) -> None:
         self._spawn(
             lambda: check_weather_key(api_key, city),
-            lambda ok, message, _result: _safe_emit(
+            lambda ok, message, _result: _emit(
                 self.weatherChecked, ok, message
             ),
             api_key,
@@ -88,7 +88,7 @@ class SetupChecker(QObject):
     def check_price(self, api_key: str) -> None:
         self._spawn(
             lambda: check_price_key(api_key),
-            lambda ok, message, _result: _safe_emit(
+            lambda ok, message, _result: _emit(
                 self.priceChecked, ok, message
             ),
             api_key,
@@ -97,7 +97,10 @@ class SetupChecker(QObject):
     def check_plug(self, credentials: PlugCredentials) -> None:
         self._spawn(
             lambda: check_plug_credentials(credentials),
-            self._emit_plug,
+            lambda ok, message, result: _emit(
+                self.plugChecked, ok, message,
+                result if isinstance(result, str) else "",
+            ),
             credentials.password,
         )
 
@@ -111,33 +114,18 @@ class SetupChecker(QObject):
             try:
                 result = work()
             except StromError as exc:
-                emit(False, _scrub(str(exc), secret), None)
+                emit(False, scrub(str(exc), secret), None)
             except Exception as exc:  # noqa: BLE001 - shown as a short reason
-                emit(False, _scrub(f"{type(exc).__name__}: {exc}", secret), None)
+                emit(False, scrub(f"{type(exc).__name__}: {exc}", secret), None)
             else:
                 emit(True, "", result)
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _emit_plug(self, ok: bool, message: str, result: object) -> None:
-        plug_config = result if isinstance(result, str) else ""
-        try:
-            self.plugChecked.emit(ok, message, plug_config)
-        except RuntimeError:
-            # The window was destroyed while the check was in flight.
-            pass
 
-
-def _safe_emit(signal: SignalInstance, ok: bool, message: str) -> None:
+def _emit(signal: SignalInstance, *args: object) -> None:
     try:
-        signal.emit(ok, message)
+        signal.emit(*args)
     except RuntimeError:
         # The window was destroyed while the check was in flight.
         pass
-
-
-def _scrub(message: str, *secrets: str) -> str:
-    for secret in secrets:
-        if secret:
-            message = message.replace(secret, "***")
-    return message

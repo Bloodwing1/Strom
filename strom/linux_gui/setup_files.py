@@ -15,11 +15,10 @@ Security rules for this module:
   into ``QSettings`` or logs.
 * Written files are forced to mode 0600 so other users on the machine cannot
   read them.
-* ``tapologin.env`` is written with a per-value encoding chosen so that
-  python-dotenv's parser reads every value back verbatim; the finished
-  content is verified against python-dotenv's own parser before anything
-  touches disk, so passwords with spaces, quotes, ``#``, or backslashes
-  are stored correctly or not at all.
+* ``tapologin.env`` values are quoted so that python-dotenv's parser reads
+  them back verbatim; the finished content is verified against
+  python-dotenv's own parser before anything touches disk, so the file is
+  stored correctly or not at all.
 * Status checks read file *presence*/emptiness only in this module; callers
   that need values go through the backend's own loader at run time.
 """
@@ -29,7 +28,6 @@ from __future__ import annotations
 import io
 import ipaddress
 import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -149,96 +147,43 @@ def _parse_env_content(content: str) -> dict[str, str]:
     return parsed
 
 
-def _unquoted_env_value(value: str) -> str | None:
-    """Encode ``value`` without quotes, or None when that is lossy.
-
-    python-dotenv reads unquoted values verbatim with no escape decoding —
-    which makes this the only lossless representation for values ending
-    with a backslash (both quoted styles would swallow the closing quote).
-    But the unquoted branch also strips trailing whitespace, drops a
-    leading `` ``/#``-style comment, and never sees whitespace after
-    ``=``, so it is only usable when none of that applies.
-    """
-    if value != value.rstrip() or value[0].isspace():
-        return None
-    if value[:1] in ("'", '"'):
-        return None
-    if re.search(r"\s#", value):
-        return None
-    return value
-
-
-def _env_line(key: str, value: str) -> str:
-    """Encode one key/value line, preferring the double-quoted form.
-
-    The quoted form is lossless except for values ending with a backslash:
-    python-dotenv's quoted scanner treats a backslash before the closing
-    quote as an escaped quote and continues onto the next line (the same
-    parser flaw behind upstream issue #661). Those values fall back to the
-    unquoted form; a value that neither form can represent is rejected by
-    the round-trip check instead of being written corrupted.
-    """
-    if value.endswith("\\"):
-        unquoted = _unquoted_env_value(value)
-        if unquoted is not None:
-            return f"{key}={unquoted}\n"
-    return f"{key}={_quote_env_value(value)}\n"
-
-
 def _render_tapo_env(entries: list[tuple[str, str]]) -> str:
     """Render the file content and prove it round-trips before writing.
 
-    Whatever encoding the lines use, the finished content is parsed back
-    with python-dotenv's own parser — the exact code path the CLI's
-    ``load_dotenv`` uses — and compared value by value. A quoted value
-    ending with a backslash can still swallow its closing quote and run
-    onto the next line; as the *last* line the parser's backtracking
-    recovers it, so that order is tried as a fallback. If no order parses
-    back correctly, nothing is written and a clear error is shown instead
-    of silently corrupting credentials.
+    The finished content is parsed back with python-dotenv's own parser —
+    the exact code path the CLI's ``load_dotenv`` uses — and compared value
+    by value. A value python-dotenv cannot read back exactly is rejected
+    here instead of being written corrupted.
     """
-
-    def render(order: list[tuple[str, str]]) -> str:
-        return "".join(_env_line(key, value) for key, value in order)
-
-    def roundtrips(order: list[tuple[str, str]]) -> bool:
-        try:
-            return _parse_env_content(render(order)) == dict(order)
-        except ValueError:
-            return False
-
-    if roundtrips(entries):
-        return render(entries)
-
-    # Quoted values ending with a backslash are only recoverable on the
-    # last line; stable-sort them there.
-    reordered = sorted(entries, key=lambda item: item[1].endswith("\\"))
-    if reordered != entries and roundtrips(reordered):
-        return render(reordered)
-
-    raise SetupError(
-        "Strom cannot store these plug details safely in tapologin.env "
-        "(python-dotenv cannot read back this combination of characters). "
-        "Please change the password, or set EMAIL, PASSWORD, and DEVICEIP "
-        "as environment variables instead.",
-        code="encoding",
+    content = "".join(
+        f"{key}={_quote_env_value(value)}\n" for key, value in entries
     )
+    try:
+        parsed = _parse_env_content(content)
+    except ValueError:
+        parsed = {}
+    if parsed != dict(entries):
+        raise SetupError(
+            "Strom cannot store these plug details safely in tapologin.env "
+            "(python-dotenv cannot read back this combination of "
+            "characters). Please set DEVICEIP and PLUG_CONFIG as environment "
+            "variables instead.",
+            code="encoding",
+        )
+    return content
 
 
 def save_tapo_credentials(
     config_dir: Path,
-    email: str,
-    password: str,
     device_ip: str,
     *,
     plug_config: str = "",
 ) -> Path:
-    """Save the plug endpoint and the best available proof.
+    """Save the plug endpoint and, when available, the derived proof.
 
-    Both account fields together store the account credentials and drop
-    any derived configuration, since the account may have changed. A
-    derived configuration on its own is stored instead of the account
-    fields, so the TP-Link password is no longer kept on disk.
+    Only the address is required. A derived configuration captured by a
+    successful Test is stored beside it, so the TP-Link account password is
+    never written by the GUI.
     """
     cleaned_ip = _non_blank(device_ip, "plug IP address")
     try:
@@ -250,21 +195,7 @@ def save_tapo_credentials(
             code="bad_ip",
             params={"value": cleaned_ip},
         ) from None
-    cleaned_email = email.strip()
-    cleaned_password = password.strip()
-    if bool(cleaned_email) != bool(cleaned_password):
-        raise SetupError(
-            "Enter both the Tapo email and the password, or leave both "
-            "empty and test the plug without an account.",
-            code="credentials_together",
-        )
-    if cleaned_email:
-        entries = [
-            ("EMAIL", _non_blank(email, "plug account email")),
-            ("PASSWORD", _non_blank(password, "plug account password")),
-            ("DEVICEIP", cleaned_ip),
-        ]
-    elif plug_config:
+    if plug_config:
         entries = [("DEVICEIP", cleaned_ip), (PLUG_CONFIG_KEY, plug_config)]
     else:
         entries = [("DEVICEIP", cleaned_ip)]

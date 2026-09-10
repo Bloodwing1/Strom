@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from PySide6 import QtWidgets
 
-from PySide6 import QtGui, QtWidgets
-
+from strom.linux_gui.app import app_icon
 from strom.linux_gui.window_base import WindowBase
 
 
@@ -14,11 +13,7 @@ class TrayMixin(WindowBase):
         if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
             self._tray = None
             return
-        icon = QtGui.QIcon()
-        assets = Path(__file__).with_name("assets")
-        for size in (32, 48, 64, 128, 256, 512):
-            icon.addFile(str(assets / f"strom-{size}.png"))
-        tray = QtWidgets.QSystemTrayIcon(icon, self)
+        tray = QtWidgets.QSystemTrayIcon(app_icon(), self)
         tray.setToolTip("Strom")
         menu = QtWidgets.QMenu(self)
         self._tray_open_action = menu.addAction("Open Strom")
