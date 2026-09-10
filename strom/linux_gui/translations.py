@@ -35,6 +35,9 @@ SPANISH = {
     'Weather forecast': 'Previsión del tiempo',
     'Electricity prices': 'Precios de electricidad',
     'Your smart plug': 'Tu enchufe inteligente',
+    'Weather': 'Tiempo',
+    'Prices': 'Precios',
+    'Plug': 'Enchufe',
     'Back': 'Atrás',
     'Continue': 'Continuar',
     'Finish setup': 'Terminar configuración',
@@ -47,16 +50,10 @@ SPANISH = {
     (
         'Add a weather key so Strom can plan for colder hours.'
     ): (
-        'Añade una clave del tiempo para planificar las horas más frías.'
+        'Añade una clave de OpenWeatherMap para planificar las horas más frías.'
     ),
     'How do I get this?': '¿Cómo consigo esto?',
-    'Save weather key': 'Guardar clave del tiempo',
-    'Save price token': 'Guardar token de precios',
-    (
-        'Add a price token so Strom can find cheaper hours.'
-    ): (
-        'Añade un token de precios para encontrar las horas más económicas.'
-    ),
+    'Save weather key': 'Guardar clave',
     'Smart plug account (Tapo)': 'Cuenta del enchufe inteligente (Tapo)',
     'Connect the Tapo plug that your heater uses.': 'Conecta el enchufe Tapo de tu calefactor.',
     'Email used in the Tapo app': 'Correo usado en la aplicación Tapo',
@@ -83,8 +80,7 @@ SPANISH = {
     'Clear log': 'Borrar registro',
     'Idle': 'En espera',
     'Connect ENTSO-E': 'Conectar ENTSO-E',
-    'Paste your weather key here': 'Pega aquí tu clave del tiempo',
-    'Paste your electricity price token here': 'Pega aquí tu token de precios de electricidad',
+    'Paste your weather key here': 'Pega aquí tu clave de OpenWeatherMap',
     (
         'Cycle log (technical details from the last run):'
     ): (
@@ -92,9 +88,14 @@ SPANISH = {
     ),
     'Choose a settings folder to begin.': 'Elige una carpeta de configuración para empezar.',
     (
-        'Not ready yet: missing {items}. Choose Manage accounts to finish setup.'
+        'Not ready yet.'
     ): (
-        'Falta configurar: {items}. Elige Gestionar cuentas para terminar.'
+        'Aún no está listo.'
+    ),
+    (
+        'All set. Start heating when you like.'
+    ): (
+        'Todo listo. Empieza a calentar cuando quieras.'
     ),
     (
         'All set — account details available. You can run a heating cycle.'
@@ -179,7 +180,8 @@ SPANISH.update({
         "El Strom actualizado está en marcha; ya puedes cerrar esta ventana."
     ),
     "Update download cancelled.": "Descarga de la actualización cancelada.",
-    "Strom was updated": "Strom se ha actualizado",
+    "Strom was updated.": "Strom se ha actualizado.",
+    "Strom was updated to {version}.": "Strom se ha actualizado a {version}.",
     (
         "Installation is unavailable while a cycle runs; try again after it "
         "finishes."
@@ -231,7 +233,6 @@ SPANISH.update({
     "Checking for updates failed: {reason}": (
         "La búsqueda de actualizaciones falló: {reason}"
     ),
-    "Download failed: {reason}": "La descarga falló: {reason}",
     "The update was not installed. {detail}": (
         "La actualización no se instaló. {detail}"
     ),
@@ -244,9 +245,294 @@ SPANISH.update({
     ),
     (
         "The update could not be restored automatically; your previous "
-        "version is preserved at: {backup}"
+        "version is preserved at: {backup}\n{detail}\n{error}"
     ): (
         "La actualización no se pudo restaurar automáticamente; tu versión "
-        "anterior se conserva en: {backup}"
+        "anterior se conserva en: {backup}\n{detail}\n{error}"
+    ),
+})
+
+# Run summary, setup checks, tray behavior and the revised copy.
+SPANISH.update({
+    (
+        "Plan your heating around lower electricity prices. Nothing runs "
+        "until you choose Start heating."
+    ): (
+        "Planifica tu calefacción para las horas más económicas. Nada se "
+        "ejecuta hasta que pulses Empezar a calentar."
+    ),
+    (
+        "Clicking Start heating checks the weather and prices, then may "
+        "switch your heater on or off for about one hour. Keep Strom running "
+        "until the run finishes."
+    ): (
+        "Al pulsar Empezar a calentar se consultan el tiempo y los precios, "
+        "y el calefactor puede encenderse o apagarse durante aproximadamente "
+        "una hora. Mantén Strom en marcha hasta que termine."
+    ),
+    (
+        "Strom will check the weather and electricity prices, then may switch "
+        "your real heater on or off for about one hour. Keep Strom running "
+        "until the run finishes."
+    ): (
+        "Strom consultará el tiempo y los precios de electricidad, y podrá "
+        "encender o apagar tu calefactor real durante aproximadamente una "
+        "hora. Mantén Strom en marcha hasta que termine."
+    ),
+    (
+        "Your weather key, price key, and plug account are saved as small "
+        "files (weather_api_key.txt, price_api_key.txt, tapologin.env) inside "
+        "the settings folder shown above; the folder is created "
+        "automatically. Already using the strom command line? Tick 'Use a "
+        "custom settings folder' and pick your existing folder so Strom finds "
+        "your keys."
+    ): (
+        "Tu clave de OpenWeatherMap, tu token de ENTSO-E y tu cuenta del "
+        "enchufe se "
+        "guardan en archivos pequeños (weather_api_key.txt, price_api_key.txt "
+        "y tapologin.env) dentro de la carpeta indicada; la carpeta se crea "
+        "automáticamente. Si ya usas la línea de comandos de Strom, activa "
+        "'Usar una carpeta de configuración personalizada' y elige tu carpeta "
+        "para que Strom encuentre tus claves."
+    ),
+    (
+        "How much detail the activity log below shows. INFO (recommended) "
+        "shows normal progress; WARNING shows only warnings and errors; "
+        "ERROR shows only failures."
+    ): (
+        "Cuánto detalle muestra el registro de actividad: INFO (recomendado) "
+        "muestra el progreso normal; WARNING solo advertencias y errores; "
+        "ERROR solo errores."
+    ),
+    "Keep running automatically": "Seguir automáticamente",
+    (
+        "Automatic repeats are on: Strom starts the next run when this one "
+        "finishes."
+    ): (
+        "Las repeticiones automáticas están activadas: Strom empezará la "
+        "siguiente ejecución al terminar esta."
+    ),
+    (
+        "When a run finishes, Strom starts the next one automatically. Strom "
+        "must stay running for this to keep your home warm."
+    ): (
+        "Cuando termina una ejecución, Strom empieza la siguiente "
+        "automáticamente. Strom debe seguir en marcha para mantener tu casa "
+        "caliente."
+    ),
+    "Location": "Ubicación",
+    (
+        "Strom currently works in Spain. More countries are coming."
+    ): (
+        "Strom funciona actualmente en España. Pronto añadiremos más países."
+    ),
+    (
+        "What you'll need: a free OpenWeatherMap key, an ENTSO-E token "
+        "(it can take a day to arrive by email), and your Tapo email, "
+        "password and plug IP address."
+    ): (
+        "Lo que necesitarás: una clave gratuita de OpenWeatherMap, un token "
+        "de ENTSO-E (puede tardar un día en llegar por correo) y tu correo, "
+        "contraseña y dirección IP del enchufe Tapo."
+    ),
+    "Start heating for the next hour": "Empezar a calentar durante la próxima hora",
+    "Start heating": "Empezar a calentar",
+    "Plan ahead (hours):": "Planificar con antelación (horas):",
+    (
+        "Activity log (technical details from the last run):"
+    ): (
+        "Registro de actividad (detalles técnicos de la última ejecución):"
+    ),
+    "Ready": "Listo",
+    "Setup needed": "Configuración pendiente",
+    "Finish setup to start heating.": "Termina la configuración para empezar a calentar.",
+    "Starting…": "Iniciando…",
+    "Working…": "En curso…",
+    "Done": "Terminado",
+    "Couldn't start": "No se pudo iniciar",
+    "Couldn't finish": "No se pudo terminar",
+    "Test": "Probar",
+    "Saved, not tested": "Guardado, sin probar",
+    "Works ✓": "Funciona ✓",
+    "Plug found ✓": "Enchufe encontrado ✓",
+    "Testing…": "Comprobando…",
+    "Paste the key first, then test it.": "Pega la clave y luego pruébala.",
+    (
+        "Save the plug details first, then test them."
+    ): (
+        "Guarda los datos del enchufe y luego pruébalos."
+    ),
+    "Settings folder: {path}": "Carpeta de configuración: {path}",
+    "(none chosen)": "(ninguna elegida)",
+    (
+        "Choose a settings folder first."
+    ): (
+        "Elige primero una carpeta de configuración."
+    ),
+    (
+        "That path is an existing file, not a folder: {path}"
+    ): (
+        "Esa ruta es un archivo, no una carpeta: {path}"
+    ),
+    (
+        "Could not use the settings folder: {error}"
+    ): (
+        "No se pudo usar la carpeta de configuración: {error}"
+    ),
+    (
+        "Could not save the weather key: {error}"
+    ): (
+        "No se pudo guardar la clave de OpenWeatherMap: {error}"
+    ),
+    (
+        "Could not save the price key: {error}"
+    ): (
+        "No se pudo guardar el token de ENTSO-E: {error}"
+    ),
+    (
+        "Could not save the plug details: {error}"
+    ): (
+        "No se pudieron guardar los datos del enchufe: {error}"
+    ),
+    (
+        "Could not create the settings folder: {error}"
+    ): (
+        "No se pudo crear la carpeta de configuración: {error}"
+    ),
+    (
+        "The settings folder is not a directory: {path}"
+    ): (
+        "La carpeta de configuración no es un directorio: {path}"
+    ),
+    "Select settings folder": "Seleccionar carpeta de configuración",
+    "Cycle in progress": "Ciclo en curso",
+    (
+        "Heater on for {on} of {interval} minutes."
+    ): (
+        "Calefactor encendido durante {on} de {interval} minutos."
+    ),
+    "Estimated cost: {cost} EUR.": "Coste estimado: {cost} EUR.",
+    (
+        "Usually about one hour. {minutes} min elapsed so far."
+    ): (
+        "Suele tardar una hora. {minutes} min transcurridos."
+    ),
+    (
+        "Automatic repeats stopped after a failed run."
+    ): (
+        "Las repeticiones automáticas se detuvieron tras un fallo."
+    ),
+    "Open Strom": "Abrir Strom",
+    "Quit": "Salir",
+    (
+        "Strom keeps running in the background."
+    ): (
+        "Strom sigue en marcha en segundo plano."
+    ),
+    (
+        "Strom will quit after this run finishes."
+    ): (
+        "Strom se cerrará cuando termine esta ejecución."
+    ),
+    "About Strom": "Acerca de Strom",
+    (
+        "Strom {version}\n\nSmart heating that plans around cheap electricity."
+    ): (
+        "Strom {version}\n\nCalefacción inteligente que aprovecha las horas "
+        "más económicas."
+    ),
+    "Strom updates": "Actualizaciones de Strom",
+    "Weather key ✓": "OpenWeatherMap ✓",
+    "Weather key missing": "Falta la clave de OpenWeatherMap",
+    "Price key ✓": "ENTSO-E ✓",
+    "Price key missing": "Falta el token de ENTSO-E",
+    "Plug account ✓": "Enchufe ✓",
+    "Plug account missing": "Falta la cuenta del enchufe",
+    "Save price key": "Guardar token",
+    "Paste your electricity price key here": "Pega aquí tu token de ENTSO-E",
+    (
+        "Your key is hidden while typing; paste works normally."
+    ): (
+        "Tu clave se oculta al escribir; pegar funciona con normalidad."
+    ),
+    (
+        "Add a price key so Strom can find cheaper hours."
+    ): (
+        "Añade un token de ENTSO-E para encontrar las horas más económicas."
+    ),
+    "The weather key is empty; paste it and try again.": (
+        "La clave de OpenWeatherMap está vacía; pégala e inténtalo de nuevo."
+    ),
+    (
+        "The electricity price key is empty; paste it and try again."
+    ): (
+        "El token de ENTSO-E está vacío; pégalo e inténtalo de nuevo."
+    ),
+    (
+        "The plug account email is empty; paste it and try again."
+    ): (
+        "El correo de la cuenta del enchufe está vacío; pégalo e inténtalo de nuevo."
+    ),
+    (
+        "The plug account password is empty; paste it and try again."
+    ): (
+        "La contraseña de la cuenta del enchufe está vacía; pégala e inténtalo de nuevo."
+    ),
+    (
+        "The plug IP address is empty; paste it and try again."
+    ): (
+        "La dirección IP del enchufe está vacía; pégala e inténtalo de nuevo."
+    ),
+    (
+        "The weather key must be a single line; re-copy it without line breaks."
+    ): (
+        "La clave de OpenWeatherMap debe ocupar una sola línea; vuelve a "
+        "copiarla sin saltos de línea."
+    ),
+    (
+        "The electricity price key must be a single line; re-copy it without "
+        "line breaks."
+    ): (
+        "El token de ENTSO-E debe ocupar una sola línea; vuelve a copiarlo "
+        "sin saltos de línea."
+    ),
+    (
+        "The plug account email must be a single line; re-copy it without "
+        "line breaks."
+    ): (
+        "El correo de la cuenta del enchufe debe ocupar una sola línea; "
+        "vuelve a copiarlo sin saltos de línea."
+    ),
+    (
+        "The plug account password must be a single line; re-copy it without "
+        "line breaks."
+    ): (
+        "La contraseña de la cuenta del enchufe debe ocupar una sola línea; "
+        "vuelve a copiarla sin saltos de línea."
+    ),
+    (
+        "The plug IP address must be a single line; re-copy it without line "
+        "breaks."
+    ): (
+        "La dirección IP del enchufe debe ocupar una sola línea; vuelve a "
+        "copiarla sin saltos de línea."
+    ),
+    (
+        "'{value}' does not look like an IP address. The Tapo app shows it "
+        "under the plug's device information."
+    ): (
+        "'{value}' no parece una dirección IP. La aplicación Tapo la muestra "
+        "en la información del dispositivo."
+    ),
+    (
+        "Strom cannot store these plug details safely in tapologin.env "
+        "(python-dotenv cannot read back this combination of characters). "
+        "Please change the password, or set EMAIL, PASSWORD, and DEVICEIP "
+        "as environment variables instead."
+    ): (
+        "Strom no puede guardar estos datos del enchufe de forma segura en "
+        "tapologin.env (python-dotenv no puede volver a leer esta combinación "
+        "de caracteres). Cambia la contraseña o define EMAIL, PASSWORD y "
+        "DEVICEIP como variables de entorno."
     ),
 })

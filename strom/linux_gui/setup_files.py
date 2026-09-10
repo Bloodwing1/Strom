@@ -40,7 +40,6 @@ from dotenv.parser import parse_stream
 WEATHER_FILE = "weather_api_key.txt"
 PRICE_FILE = "price_api_key.txt"
 TAPO_FILE = "tapologin.env"
-HOUSE_FILE = "house_config.json"
 
 # Status-check environment fallbacks mirror the CLI precedence: an exported
 # variable overrides the files, so setup is "done" when either source exists.
@@ -50,28 +49,44 @@ TAPO_ENV_KEYS = ("EMAIL", "PASSWORD", "DEVICEIP")
 
 
 class SetupError(Exception):
-    """A setup save failed validation; the message is user-facing."""
+    """A setup save failed validation; the message is user-facing.
+
+    ``code`` and ``params`` let the GUI translate the message, while
+    ``message`` stays a complete English sentence for logs and tests.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "",
+        params: dict[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.params = params or {}
 
 
 @dataclass(frozen=True)
 class SetupStatus:
     """What the GUI shows as done/missing for the selected directory."""
 
-    directory_exists: bool
     weather_key_saved: bool
     price_key_saved: bool
     tapo_saved: bool
-    house_config_present: bool
 
 
 def _non_blank(value: str, what: str) -> str:
     """Trim copy-paste artifacts; blank or multi-line input is rejected."""
     cleaned = value.strip()
     if not cleaned:
-        raise SetupError(f"The {what} is empty; paste it and try again.")
+        raise SetupError(
+            f"The {what} is empty; paste it and try again.", code="empty"
+        )
     if "\n" in value or "\r" in value:
         raise SetupError(
-            f"The {what} must be a single line; re-copy it without line breaks."
+            f"The {what} must be a single line; re-copy it without line breaks.",
+            code="multiline",
         )
     return cleaned
 
@@ -187,7 +202,8 @@ def _render_tapo_env(email: str, password: str, device_ip: str) -> str:
         "Strom cannot store these plug details safely in tapologin.env "
         "(python-dotenv cannot read back this combination of characters). "
         "Please change the password, or set EMAIL, PASSWORD, and DEVICEIP "
-        "as environment variables instead."
+        "as environment variables instead.",
+        code="encoding",
     )
 
 
@@ -203,7 +219,9 @@ def save_tapo_credentials(
     except ValueError:
         raise SetupError(
             f"'{cleaned_ip}' does not look like an IP address. "
-            "The Tapo app shows it under the plug's device information."
+            "The Tapo app shows it under the plug's device information.",
+            code="bad_ip",
+            params={"value": cleaned_ip},
         ) from None
     content = _render_tapo_env(cleaned_email, cleaned_password, cleaned_ip)
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -231,28 +249,33 @@ def read_setup_status(config_dir: Path) -> SetupStatus:
     documented precedence.
     """
     return SetupStatus(
-        directory_exists=config_dir.is_dir(),
         weather_key_saved=bool(os.getenv(ENV_WEATHER_KEY, "").strip())
         or _file_has_content(config_dir / WEATHER_FILE),
         price_key_saved=bool(os.getenv(ENV_PRICE_KEY, "").strip())
         or _file_has_content(config_dir / PRICE_FILE),
         tapo_saved=_env_credentials_complete() or _env_file_credentials(config_dir),
-        house_config_present=(config_dir / HOUSE_FILE).is_file(),
     )
 
 
 def _env_file_credentials(config_dir: Path) -> bool:
     """Parse ``tapologin.env`` for the three keys without mutating os.environ."""
+    return read_tapo_credentials(config_dir) is not None
+
+
+def read_tapo_credentials(config_dir: Path) -> tuple[str, str, str] | None:
+    """Read EMAIL/PASSWORD/DEVICEIP from ``tapologin.env``; None when incomplete.
+
+    Parses with python-dotenv's own parser so quoted values read back
+    exactly; ``os.environ`` is never touched.
+    """
     path = config_dir / TAPO_FILE
-    if not path.is_file():
-        return False
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return False
-    found: set[str] = set()
-    for line in lines:
-        key, sep, value = line.partition("=")
-        if sep and key.strip() in TAPO_ENV_KEYS and value.strip():
-            found.add(key.strip())
-    return found == set(TAPO_ENV_KEYS)
+        parsed = _parse_env_content(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return None
+    email = parsed.get("EMAIL", "").strip()
+    password = parsed.get("PASSWORD", "").strip()
+    device_ip = parsed.get("DEVICEIP", "").strip()
+    if email and password and device_ip:
+        return email, password, device_ip
+    return None

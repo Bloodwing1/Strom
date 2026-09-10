@@ -40,7 +40,7 @@ class TestResolveActuation:
     def test_fractional_is_exact_portion_of_interval(self):
         plan = resolve_actuation(0.25, INTERVAL)
         assert plan.total_on_seconds == pytest.approx(900.0)
-        assert plan.total_seconds == pytest.approx(INTERVAL)
+        assert sum(s.seconds for s in plan.segments) == pytest.approx(INTERVAL)
         assert [s.on for s in plan.segments] == [True, False]
 
     def test_tiny_positive_is_bounded_not_full_on(self):
@@ -51,13 +51,13 @@ class TestResolveActuation:
     def test_segments_cover_interval_exactly(self):
         for duty in (0.1, 0.4, 0.9):
             plan = resolve_actuation(duty, INTERVAL)
-            assert plan.total_seconds == pytest.approx(INTERVAL)
+            assert sum(s.seconds for s in plan.segments) == pytest.approx(INTERVAL)
 
     def test_sub_second_off_segment_still_covers_interval(self):
         # Duty just below 1.0: the remainder is under one second but the
         # plan must still cover the whole interval and end with OFF.
         plan = resolve_actuation(3599.5 / INTERVAL, INTERVAL)
-        assert plan.total_seconds == pytest.approx(INTERVAL)
+        assert sum(s.seconds for s in plan.segments) == pytest.approx(INTERVAL)
         assert plan.segments[-1].on is False
         assert plan.segments[-1].seconds == pytest.approx(0.5)
 
@@ -192,4 +192,4 @@ class TestMaxOnWatchdog:
                                  poll_seconds=1.0)
         watchdog.start()
         await watchdog.stop()
-        assert not watchdog.is_running
+        assert watchdog._task is None

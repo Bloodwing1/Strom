@@ -198,48 +198,63 @@ library requirements.
 
 - Check for and install Strom updates from the application menu (see
   "Updating from the GUI" above); release checks are silent and never
-  interrupt setup or a running cycle.
-- Guide first-time users through three setup screens: **Weather forecast**,
-  **Electricity prices**, and **Your smart plug**. Continue saves the current
-  details; errors stay on the same screen. Back lets you revisit earlier steps,
-  and Set up later opens the heating screen without starting anything.
-  Each account has a "How do I get this?" helper. Returning users resume at
-  the first missing account, or go straight to heating when all details are
-  available. **Manage accounts** reopens setup.
-- Choose English or Spanish and a city or village on the first setup screen.
-  Spain is the only available country; more countries are work in progress.
-  Choose a suggested city or type a place name, which OpenWeatherMap resolves
-  when a cycle runs. The GUI passes the selected place with the ES country code
-  to the CLI through `--city`; electricity prices remain Spanish.
-- Keep the heating screen focused on planning and running one cycle. Log
-  preferences live under **More options**, and the live log is hidden until
-  **Show technical details** is selected. The settings folder defaults to
-  `~/.config/strom`; **Advanced settings** in setup reveals the custom-folder
-  controls for existing CLI users.
-- Paste-and-save setup: the weather key, the electricity price token, and
+  interrupt setup or a running cycle. **About Strom** shows the version and
+  links to the release page.
+- Guide first-time users through setup with a four-step indicator
+  (**Location**, **Weather forecast**, **Electricity prices**, **Your smart
+  plug**) that ticks off completed steps; clicking a step jumps back to it.
+  Continue saves the current details; errors stay inline on the same screen.
+  Set up later opens the heating screen without starting anything. Each
+  account has a "How do I get this?" helper. Returning users resume at the
+  first missing account, or go straight to heating when all details are
+  available. **Manage accounts** reopens setup at the first incomplete step.
+- Choose English or Spanish from the header (available on every screen) and a
+  city or village on the first setup screen. Strom currently works in Spain;
+  more countries are coming. Choose a suggested city or type a place name,
+  which OpenWeatherMap resolves when a cycle runs. The GUI passes the selected
+  place with the ES country code to the CLI through `--city`; electricity
+  prices remain Spanish.
+- Paste-and-save setup: the weather key, the electricity price key, and
   the Tapo account (email, password, plug IP) can be typed directly into
-  the window. Saving writes the exact files the CLI reads
+  the window. Each account also has a **Test** button that performs the real
+  operation (one weather request, one published-price query, one LAN
+  discovery) and reports "Works ✓" or the reason it failed, so a typo is
+  caught during setup instead of during an hour-long run. Keys are tested
+  from the field you just typed, or from the saved file if the field is
+  empty. Saving writes the exact files the CLI reads
   (`weather_api_key.txt`, `price_api_key.txt`, `tapologin.env`) into the
   selected folder — created automatically if needed — with mode 0600 so
   other users on the machine cannot read them. Values are trimmed of
   copy-paste whitespace; `tapologin.env` is round-trip verified with
   python-dotenv's own parser before anything is written, so unusual
   passwords are stored verbatim or not at all.
-- Show a readiness checklist (weather key / price key / plug account) that
-  updates as you save, and mention what is still missing in the run
-  confirmation if you start a cycle before finishing setup.
+- Show a readiness checklist with a chip per account (weather key / price key
+  / plug account) that updates as you save. **Start heating** stays disabled
+  until setup is complete, with a **Finish setup** button that opens the first
+  missing step, so a run cannot fail from missing configuration.
 - Select a configuration directory with the same file layout as the CLI
   (`tapologin.env`, `price_api_key.txt`, `weather_api_key.txt`, optional
   `house_config.json` — see Installation above); the folder is created on
   demand if it does not exist yet.
-- Explain the technical controls: the optimization horizon (1–48 hours,
-  default 24 — how far ahead Strom plans, not how long a run takes), the
-  log detail level (INFO/WARNING/ERROR), and the selected weather location /
-  Spanish (ES) prices.
-- Run **one** control cycle. A confirmation dialog states that this operates
-  the real smart plug and may switch your heater on for one control interval
-  (about one hour) before anything happens; Cancel is the default.
-- Watch the cycle's output in a bounded, read-only log while it runs.
+- Keep the heating screen focused on one decision: **Start heating for the
+  next hour**. The planning horizon (2–48 hours, default 24) and log detail
+  level (INFO/WARNING/ERROR) live under **More options**; the live log is
+  hidden until **Show technical details** is selected. The status line above
+  the button uses plain words (Ready, Working…, Done, Couldn't finish) and
+  shows elapsed time while a run is in progress.
+- **Keep running automatically** (on by default) starts the next run when the
+  current one finishes, so Strom keeps your home warm without hourly clicks; a
+  failed run stops automatic repeats and says so. A confirmation dialog states
+  that this operates the real smart plug and may switch your heater on for one
+  control interval (about one hour) before anything happens; Cancel is the
+  default.
+- When a run finishes, the window shows a short result: how long the heater
+  was on and the estimated cost, when the child reported it. With a system
+  tray available, closing the window while a run is active hides it to the
+  tray and notifies you when the run finishes; **Quit** from the tray waits
+  for the current run to finish before exiting. Without a tray, closing during
+  a run is refused as before.
+- Watch the cycle's output in a bounded, read-only activity log while it runs.
 
 ### Configuration and environment precedence
 
@@ -251,21 +266,26 @@ library requirements.
   values from `tapologin.env` and the corresponding key files, exactly as
   with the CLI.
 - The GUI remembers the last used directory, city, language, horizon, log level,
-  and window geometry. The initial directory is the saved path, then `STROM_CONFIG_DIR`,
-  then `~/.config/strom`. Only non-secret preferences are stored; API keys
-  never enter the GUI's settings.
+  automatic-repeat preference, and window geometry. The initial directory is
+  the saved path, then `STROM_CONFIG_DIR`, then `~/.config/strom`. Only
+  non-secret preferences are stored; API keys never enter the GUI's settings.
 
 ### Long-running behavior and limitations
 
-- Keep the window open until the cycle finishes. Closing while a cycle is
-  starting or running is refused with an explanation, and the child process
-  is never killed or detached; the run button and form stay disabled until
-  the cycle exits. There is deliberately **no Stop/Force-quit** control in
-  this version: no silent process termination.
-- Only one cycle runs at a time; duplicate starts are prevented. The setup
-  fields are disabled while a cycle runs so files cannot change mid-cycle.
+- A run lasts one control interval (about an hour). With **Keep running
+  automatically** enabled, Strom starts the next run when the current one
+  finishes. A failed run stops automatic repeats and explains why.
+- With a system tray available, closing the window while a run is active
+  hides it to the tray; a notification reports the result, and **Quit** from
+  the tray waits for the current run to finish. Without a tray, closing while
+  a cycle is starting or running is refused with an explanation. The child
+  process is never killed or detached; the run button and form stay disabled
+  until the cycle exits. There is deliberately **no Stop/Force-quit** control
+  in this version: no silent process termination.
+- Only one run at a time; duplicate starts are prevented. The setup fields are
+  disabled while a run is in progress so files cannot change mid-cycle.
 - Not included in this version: house-parameter editing (`house_config.json`
-  must still be created by hand), charts, scheduling, tray icon, autostart,
+  must still be created by hand), charts, time-of-day scheduling, autostart,
   device discovery, and manual ON/OFF control.
 
 ### Linux troubleshooting

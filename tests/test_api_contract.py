@@ -121,7 +121,7 @@ class TestWeatherContract:
         assert len(http.calls) == 3  # bounded retries
         assert len(sleeps) == 2
         assert sleeps[1] > sleeps[0]  # exponential backoff
-        assert info.value.retryable
+        assert "after 3 attempts" in str(info.value)
 
     def test_server_error_is_retried(self):
         http = FakeHttp([FakeResponse(status=503),
@@ -136,7 +136,7 @@ class TestWeatherContract:
 
         with pytest.raises(WeatherProviderError) as info:
             get_weather_data("X", http_get=http_get, sleep=lambda s: None)
-        assert info.value.retryable
+        assert "after 3 attempts" in str(info.value)
 
     def test_client_error_not_retried(self):
         http = FakeHttp([FakeResponse(status=404)])
@@ -170,7 +170,7 @@ class TestPriceContract:
             get_price_series("ES", client=client, max_attempts=3,
                              sleep=lambda s: None)
         assert len(client.calls) == 3
-        assert info.value.retryable
+        assert "after 3 attempts" in str(info.value)
 
     def test_empty_series_rejected(self):
         client = FakeEntsoe(series=pd.Series(dtype=float))

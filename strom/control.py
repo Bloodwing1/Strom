@@ -91,10 +91,6 @@ class ActuationPlan:
     def total_on_seconds(self) -> float:
         return sum(s.seconds for s in self.segments if s.on)
 
-    @property
-    def total_seconds(self) -> float:
-        return sum(s.seconds for s in self.segments)
-
 
 def resolve_actuation(
     output: float,
@@ -117,10 +113,6 @@ def resolve_actuation(
     if value != value:  # NaN
         raise InvalidScheduleError(
             "Heater output is NaN; refusing to actuate. Re-run the optimizer."
-        )
-    if value in (float("inf"), float("-inf")):
-        raise InvalidScheduleError(
-            f"Heater output is non-finite ({value}); refusing to actuate."
         )
     if not 0.0 <= value <= 1.0:
         raise InvalidScheduleError(
@@ -227,10 +219,6 @@ class MaxOnWatchdog:
         self._on_since: float | None = None
         self._task: asyncio.Task | None = None
         self._stopped = False
-
-    @property
-    def is_running(self) -> bool:
-        return self._task is not None and not self._task.done()
 
     @property
     def on_seconds_elapsed(self) -> float:

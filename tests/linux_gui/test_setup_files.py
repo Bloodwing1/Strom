@@ -21,6 +21,7 @@ from strom.linux_gui.setup_files import (
     _parse_env_content,
     _unquoted_env_value,
     read_setup_status,
+    read_tapo_credentials,
     save_api_key,
     save_tapo_credentials,
 )
@@ -168,7 +169,6 @@ def test_parse_env_content_rejects_broken_lines():
 
 def test_read_setup_status_reflects_files_and_env(tmp_path, monkeypatch):
     status = read_setup_status(tmp_path)
-    assert status.directory_exists
     assert not status.weather_key_saved
     assert not status.tapo_saved
 
@@ -190,3 +190,23 @@ def test_read_setup_status_reflects_files_and_env(tmp_path, monkeypatch):
     )
     assert read_setup_status(tmp_path).tapo_saved
     assert (tmp_path / PRICE_FILE).name == PRICE_FILE
+
+
+def test_read_tapo_credentials_roundtrips_without_touching_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("EMAIL", raising=False)
+    monkeypatch.delenv("PASSWORD", raising=False)
+    monkeypatch.delenv("DEVICEIP", raising=False)
+    save_tapo_credentials(tmp_path, "user@example.com", 'pa ss "word', "192.168.1.7")
+
+    assert read_tapo_credentials(tmp_path) == (
+        "user@example.com",
+        'pa ss "word',
+        "192.168.1.7",
+    )
+    assert "EMAIL" not in os.environ
+
+
+def test_read_tapo_credentials_none_when_incomplete(tmp_path):
+    (tmp_path / TAPO_FILE).write_text('EMAIL="e@x.com"\nPASSWORD="p"\n')
+    assert read_tapo_credentials(tmp_path) is None
+    assert read_tapo_credentials(tmp_path / "missing") is None

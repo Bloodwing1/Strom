@@ -198,7 +198,7 @@ def install_status(
             can_install=False, reason=VERSION_UNAVAILABLE_REASON, version=None,
             identity=None,
         )
-    raw = environ.get(APPIMAGE_ENV) if environ is not None else None
+    raw = environ.get(APPIMAGE_ENV)
     if not raw:
         return InstallStatus(
             can_install=False, reason=EXTRACTED_DIR_REASON, version=version,

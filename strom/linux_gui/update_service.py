@@ -84,6 +84,7 @@ DOWNLOAD_TIMEOUT_MS = 900_000  # 15 minutes total, documented in the README
 METADATA_MAX_BYTES = 16 * 1024 * 1024
 MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024  # 1 GiB documented maximum
 MAX_REDIRECTS = 5
+PROGRESS_STEP_BYTES = 256 * 1024
 
 #: AppImage/AppDir loader variables that must not leak into the replacement.
 _RESTART_ENV_STRIP = (
@@ -285,16 +286,13 @@ class UpdateService(QObject):
         self._hasher: "hashlib._Hash | None" = None
         self._expected_size = 0
         self._received = 0
+        self._last_progress = 0
         self._redirects_left = 0
         self._watchdog = QTimer(self)
         self._watchdog.setSingleShot(True)
         self._watchdog.timeout.connect(self._on_timeout)
 
     # --- queries ---
-
-    @property
-    def state(self) -> UpdateState:
-        return self._state
 
     def is_busy(self) -> bool:
         return self._reply is not None
@@ -342,6 +340,7 @@ class UpdateService(QObject):
         self._token += 1
         self._expected_size = release.appimage.size
         self._received = 0
+        self._last_progress = 0
         self._hasher = hashlib.sha256()
         try:
             fd, raw = tempfile.mkstemp(
@@ -438,6 +437,13 @@ class UpdateService(QObject):
             os.write(self._staging_fd, data)
         except OSError as exc:
             self._fail(f"could not write the staging file: {exc}")
+            return
+        if (
+            self._received == self._expected_size
+            or self._received - self._last_progress >= PROGRESS_STEP_BYTES
+        ):
+            self._last_progress = self._received
+            self.downloadProgress.emit(self._received, self._expected_size)
 
     def _on_finished(self, token: int, reply: QNetworkReply) -> None:
         if self._current_reply(token, reply) is None:
@@ -627,6 +633,7 @@ class AckServer(QObject):
     def __init__(self, parent: QObject, name: str, token: str) -> None:
         super().__init__(parent)
         self._token = token
+        self._buffers: dict[QLocalSocket, bytearray] = {}
         self._server = QLocalServer(self)
         QLocalServer.removeServer(name)  # stale sockets from crashed attempts
         if not self._server.listen(name):
@@ -648,11 +655,22 @@ class AckServer(QObject):
                 self._read(socket)
 
     def _read(self, socket: QLocalSocket) -> None:
-        try:
-            payload = json.loads(bytes(socket.readAll().data()).decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
-            socket.abort()
+        """Accumulate a stream payload; a split write is not an error.
+
+        Local sockets are byte streams: a payload may arrive in pieces, and
+        a second callback may fire after a successful ack. Both are handled
+        by buffering per socket and stopping once the payload is consumed;
+        the handshake timeout decides failure for anything malformed.
+        """
+        buffer = self._buffers.setdefault(socket, bytearray())
+        buffer.extend(socket.readAll().data())
+        if not buffer:
             return
+        try:
+            payload = json.loads(bytes(buffer).decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return  # partial (or malformed) until the timeout
+        self._buffers.pop(socket, None)
         pid = payload.get("pid") if isinstance(payload, dict) else None
         if (
             isinstance(payload, dict)
@@ -712,6 +730,9 @@ class UpdateCoordinator(QObject):
             )
         self._state = UpdateState.Idle
         self._message = ""
+        self._message_template = ""
+        self._message_context: dict[str, str] = {}
+        self._message_note: str | None = None
         self._selection: Selection | None = None
         self._prepared: PreparedUpdate | None = None
         self._transaction: update_install.Transaction | None = None
@@ -728,7 +749,6 @@ class UpdateCoordinator(QObject):
         self._selftest_tail = ""
         self._extract_mode = os.environ.get(EXTRACT_AND_RUN_ENV) == "1"
         self._updates_refused: str | None = None
-        self._recovery_note: str | None = None
         self._phase_signals = _PhaseSignals(self)
         self._phase_signals.done.connect(self._on_phase_done)
         self._phase_signals.failed.connect(self._on_phase_failed)
@@ -764,27 +784,12 @@ class UpdateCoordinator(QObject):
     def selection(self) -> Selection | None:
         return self._selection
 
-    @property
-    def prepared(self) -> PreparedUpdate | None:
-        return self._prepared
-
-    @property
-    def startup_note(self) -> str | None:
-        """Backup location left behind by a completed restart, if any."""
-        return self._recovery_note
-
-    @property
-    def updates_refused(self) -> str | None:
-        """User-facing reason further updates are disabled, if any."""
-        return self._updates_refused
-
     def run_blocked(self) -> bool:
         """True while an accepted update forbids starting heating runs."""
-        return self._state in (UpdateState.Installing, UpdateState.Restarting)
-
-    def is_check_busy(self) -> bool:
-        """True while a release check is running."""
-        return self._state is UpdateState.Checking
+        return self._phase is not None or self._state in (
+            UpdateState.Installing,
+            UpdateState.Restarting,
+        )
 
     def is_cycle_active(self) -> bool:
         """True while a heating cycle is starting or running."""
@@ -828,6 +833,15 @@ class UpdateCoordinator(QObject):
 
     def check(self, manual: bool) -> bool:
         """Run one release check; manual failures are explained in ``message``."""
+        if self._phase is not None or self._state in (
+            UpdateState.Downloading,
+            UpdateState.Verifying,
+            UpdateState.Installing,
+            UpdateState.Restarting,
+        ):
+            if manual:
+                self._set_message("An update is already running.")
+            return False
         if self._service.is_busy():
             if manual:
                 self._set_message("An update check is already running.")
@@ -841,7 +855,7 @@ class UpdateCoordinator(QObject):
 
     def accept_install(self, release: ReleaseInfo) -> bool:
         """The explicit user consent: download, verify, install, restart."""
-        if self._state in (
+        if self._phase is not None or self._state in (
             UpdateState.Downloading,
             UpdateState.Verifying,
             UpdateState.Installing,
@@ -907,9 +921,34 @@ class UpdateCoordinator(QObject):
         self._state = state
         self.stateChanged.emit(state)
 
-    def _set_message(self, message: str) -> None:
+    def _set_message(
+        self,
+        template: str,
+        *,
+        note: str | None = None,
+        **context: str,
+    ) -> None:
+        self._message_template = template
+        self._message_context = context
+        self._message_note = note
+        message = template.format(**context) if context else template
+        if note:
+            message = f"{message}\n{note}"
         self._message = message
         self.messageChanged.emit(message)
+
+    def translated_message(self, translate: Callable[[str], str]) -> str:
+        """Translate the current message template, then interpolate values.
+
+        Interpolating before translation would make the template
+        unreachable; the dialog uses this to show the user's language.
+        """
+        text = translate(self._message_template)
+        if self._message_context:
+            text = text.format(**self._message_context)
+        if self._message_note:
+            text = f"{text}\n{translate(self._message_note)}"
+        return text
 
     def _running_child(self) -> QProcess | None:
         child = self._child
@@ -931,21 +970,20 @@ class UpdateCoordinator(QObject):
             # Another window owns the transaction and its recovery.
             return
         try:
-            note = update_install.recover(target)
+            update_install.recover(target)
         except update_install.TransactionError as exc:
             self._updates_refused = str(exc)
             self._set_message(str(exc))
             return
         finally:
             lock.release()
-        if note is not None:
-            self._recovery_note = note
 
     def _on_check_completed(self, selection: Selection) -> None:
         self._selection = selection
         if selection.candidate is not None:
             self._set_state(UpdateState.Available)
-            self._set_message(self._available_message(selection))
+            template, context = self._available_message(selection)
+            self._set_message(template, note=selection.note, **context)
             if not self._manual_check:
                 self.updateNotice.emit(selection)
             return
@@ -956,7 +994,7 @@ class UpdateCoordinator(QObject):
 
     def _on_check_failed(self, message: str) -> None:
         self._set_state(UpdateState.Failed)
-        self._set_message(f"Checking for updates failed: {message}")
+        self._set_message("Checking for updates failed: {reason}", reason=message)
 
     def _on_prepared(self, prepared: PreparedUpdate) -> None:
         self._prepared = prepared
@@ -972,15 +1010,13 @@ class UpdateCoordinator(QObject):
             self._hooks.set_run_block(False)
             self._set_message("Update download cancelled.")
 
-    def _available_message(self, selection: Selection) -> str:
+    def _available_message(self, selection: Selection) -> tuple[str, dict[str, str]]:
         assert selection.candidate is not None
-        text = (
-            f"Strom {selection.candidate.version} is available; you are "
-            f"running {self._status.version}."
-        )
-        if selection.note:
-            text = f"{text}\n{selection.note}"
-        return text
+        template = "Strom {available} is available; you are running {current}."
+        return template, {
+            "available": str(selection.candidate.version),
+            "current": str(self._status.version),
+        }
 
     # --- installation transaction (§5) ---
 
@@ -1187,6 +1223,7 @@ class UpdateCoordinator(QObject):
             return
         self._acked = True
         self._settled = True
+        self._phase = None
         self._ack_timer.stop()
         transaction = self._transaction
         if isinstance(transaction, update_install.Transaction):
@@ -1272,10 +1309,10 @@ class UpdateCoordinator(QObject):
         self._retry_timer.stop()
         self._hooks.set_run_block(False)
         version = self._status.version
-        self._set_message(
-            "Strom was updated"
-            + (f" to {version}." if version is not None else ".")
-        )
+        if version is None:
+            self._set_message("Strom was updated.")
+        else:
+            self._set_message("Strom was updated to {version}.", version=str(version))
 
     # --- failure settlement (§5, step 8) ---
 
@@ -1303,6 +1340,7 @@ class UpdateCoordinator(QObject):
 
     def _finish_failed(self, restore: bool, detail: str) -> None:
         self._settled = True
+        self._phase = None
         self._ack_timer.stop()
         self._selftest_timer.stop()
         self._retry_timer.stop()
@@ -1317,11 +1355,13 @@ class UpdateCoordinator(QObject):
                 pass
         self._hooks.set_run_block(False)
         self._set_state(UpdateState.Failed)
-        message = self._compose_failure_message(restore, detail)
-        self._set_message(message)
-        self.installFinished.emit(False, message)
+        template, context = self._compose_failure_message(restore, detail)
+        self._set_message(template, **context)
+        self.installFinished.emit(False, self._message)
 
-    def _compose_failure_message(self, restore: bool, detail: str) -> str:
+    def _compose_failure_message(
+        self, restore: bool, detail: str
+    ) -> tuple[str, dict[str, str]]:
         target, transaction = self._target, self._transaction
         if restore and target is not None and isinstance(
             transaction, update_install.Transaction
@@ -1333,12 +1373,18 @@ class UpdateCoordinator(QObject):
                 self._updates_refused = str(exc)
                 return (
                     "The update could not be restored automatically; your "
-                    f"previous version is preserved at: {transaction.backup}\n"
-                    f"{detail}\n{exc}"
+                    "previous version is preserved at: {backup}\n"
+                    "{detail}\n{error}",
+                    {
+                        "backup": str(transaction.backup),
+                        "detail": detail,
+                        "error": str(exc),
+                    },
                 )
             return (
                 "The updated Strom could not be started; your previous "
-                f"version was restored. {detail}"
+                "version was restored. {detail}",
+                {"detail": detail},
             )
         prepared = self._prepared
         if prepared is not None:
@@ -1346,4 +1392,5 @@ class UpdateCoordinator(QObject):
                 update_install.discard_transaction(target, prepared.staging, None)
             except update_install.TransactionError:
                 pass
-        return f"The update was not installed. {detail}"
+            self._prepared = None
+        return ("The update was not installed. {detail}", {"detail": detail})

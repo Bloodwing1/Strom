@@ -18,12 +18,15 @@ beyond "usable directory" is left to the child CLI because
 
 from __future__ import annotations
 
+import json
 import os
+import tempfile
+import time
 from dataclasses import replace
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QFileDialog
@@ -34,6 +37,7 @@ from strom.linux_gui.runner import (
     RunnerState,
     make_launch_spec,
 )
+from strom.linux_gui.setup_check import SetupChecker
 from strom.linux_gui.setup_files import (
     PRICE_FILE,
     TAPO_FILE,
@@ -41,6 +45,7 @@ from strom.linux_gui.setup_files import (
     SetupError,
     SetupStatus,
     read_setup_status,
+    read_tapo_credentials,
     save_api_key,
     save_tapo_credentials,
 )
@@ -52,14 +57,34 @@ from strom.linux_gui.update_service import (
     UpdaterHooks,
 )
 from strom.linux_gui.app_identity import install_status
+from strom.linux_gui.updates import RELEASES_PAGE_URL
 
 _LOG_LEVELS = ("INFO", "WARNING", "ERROR")
 _DEFAULT_HORIZON = 24
-_MIN_HORIZON = 1
+_MIN_HORIZON = 2
 _MAX_HORIZON = 48
-_INITIAL_SIZE = (720, 620)
+_INITIAL_SIZE = (720, 640)
+_CONTENT_MAX_WIDTH = 760
 _LOG_MAX_BLOCKS = 2000
 _LOG_MIN_HEIGHT = 120
+_REPEAT_DELAY_MS = 2000
+_ELAPSED_TICK_MS = 30_000
+_STEP_NAMES = (
+    "Location",
+    "Weather forecast",
+    "Electricity prices",
+    "Your smart plug",
+)
+_STEP_SHORT_NAMES = ("Location", "Weather", "Prices", "Plug")
+_RUNNER_LABELS = {
+    RunnerState.Idle: "Ready",
+    RunnerState.Starting: "Starting…",
+    RunnerState.Running: "Working…",
+    RunnerState.Completed: "Done",
+    RunnerState.FailedToStart: "Couldn't start",
+    RunnerState.Failed: "Couldn't finish",
+}
+_ERROR_COLOR = "#c0392b"
 
 _RUN_BLOCKED_TEXT = (
     "An update is being installed; starting a heating cycle is blocked "
@@ -68,10 +93,10 @@ _RUN_BLOCKED_TEXT = (
 
 _INTRO_TEXT = (
     "Plan your heating around lower electricity prices. "
-    "Nothing runs until you choose Run one cycle."
+    "Nothing runs until you choose Start heating."
 )
 _FOLDER_HELP_TEXT = (
-    "Your weather key, price token, and plug account are saved as small "
+    "Your weather key, price key, and plug account are saved as small "
     f"files ({WEATHER_FILE}, {PRICE_FILE}, {TAPO_FILE}) inside the settings "
     "folder shown above; the folder is created automatically. Already using "
     "the strom command line? Tick 'Use a custom settings folder' and pick "
@@ -82,7 +107,7 @@ _HORIZON_HELP_TEXT = (
     "longer. 24 hours is a good default."
 )
 _LOG_LEVEL_HELP_TEXT = (
-    "How much detail the cycle log below shows. INFO (recommended) shows "
+    "How much detail the activity log below shows. INFO (recommended) shows "
     "normal progress; WARNING shows only warnings and errors; ERROR shows "
     "only failures."
 )
@@ -90,14 +115,18 @@ _LOCATION_NOTE_TEXT = (
     "Using Barcelona weather and Spanish (ES) electricity prices."
 )
 _CYCLE_TEXT = (
-    "Clicking Run checks the weather and prices, then may switch your "
-    "heater on or off for about one hour. Keep this window open until the "
-    "cycle finishes."
+    "Clicking Start heating checks the weather and prices, then may switch "
+    "your heater on or off for about one hour. Keep Strom running until the "
+    "run finishes."
 )
 _CONFIRM_TEXT = (
     "Strom will check the weather and electricity prices, then may switch "
-    "your real heater on or off for about one hour. Keep this window open "
-    "until the cycle finishes."
+    "your real heater on or off for about one hour. Keep Strom running until "
+    "the run finishes."
+)
+_REPEAT_HELP_TEXT = (
+    "When a run finishes, Strom starts the next one automatically. Strom "
+    "must stay running for this to keep your home warm."
 )
 _CLOSE_REFUSED_TEXT = (
     "A control cycle is starting or running, so the window must stay open "
@@ -193,6 +222,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._updater.updateNotice.connect(self._show_update_notice)
         self._run_blocked_by_update = False
         self._update_dialog = None
+        self._tray = None
+        self._tray_open_action = None
+        self._tray_quit_action = None
+        self._quit_after_run = False
+        self._finish_note = ""
+        self._report_path: str | None = None
+        self._run_started: float | None = None
+        self._cycle_seen_active = False
+        self._checker = SetupChecker(self)
+        self._checker.weatherChecked.connect(self._on_weather_checked)
+        self._checker.priceChecked.connect(self._on_price_checked)
+        self._checker.plugChecked.connect(self._on_plug_checked)
+        self._repeat_timer = QtCore.QTimer(self)
+        self._repeat_timer.setSingleShot(True)
+        self._repeat_timer.timeout.connect(self._start_repeat)
+        self._elapsed_timer = QtCore.QTimer(self)
+        self._elapsed_timer.setInterval(_ELAPSED_TICK_MS)
+        self._elapsed_timer.timeout.connect(self._tick_elapsed)
         self._build_ui()
         self._restore_settings()
         self._language.currentIndexChanged.connect(self._apply_language)
@@ -207,74 +254,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("Strom")
         self.resize(*_INITIAL_SIZE)
 
+        # One centered column keeps line lengths readable on wide screens.
         content = QtWidgets.QWidget(self)
-        outer = QtWidgets.QVBoxLayout(content)
+        outer = QtWidgets.QHBoxLayout(content)
+        outer.setContentsMargins(0, 0, 0, 0)
+        column = QtWidgets.QWidget(content)
+        column.setMaximumWidth(_CONTENT_MAX_WIDTH)
+        outer.addStretch(1)
+        outer.addWidget(column, 1)
+        outer.addStretch(1)
 
-        self._intro_label = QtWidgets.QLabel(_INTRO_TEXT, content)
-        self._intro_label.setWordWrap(True)
-        outer.addWidget(self._intro_label)
+        body = QtWidgets.QVBoxLayout(column)
+        body.setContentsMargins(28, 20, 28, 24)
+        body.setSpacing(14)
 
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(16)
-        title = QtWidgets.QLabel("Strom · Smarter heating", content)
+        header = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel("Strom · Smarter heating", column)
         font = title.font()
-        font.setPointSize(font.pointSize() + 6)
+        font.setPointSize(font.pointSize() + 5)
         font.setBold(True)
         title.setFont(font)
-        outer.insertWidget(0, title)
+        header.addWidget(title)
+        header.addStretch(1)
+        self._language_label = QtWidgets.QLabel("Language", column)
+        header.addWidget(self._language_label)
+        self._language = QtWidgets.QComboBox(column)
+        self._language.addItem("English", "en")
+        self._language.addItem("Español", "es")
+        self._language.setAccessibleName("Language")
+        header.addWidget(self._language)
+        body.addLayout(header)
 
-        self._pages = QtWidgets.QStackedWidget(content)
-        self._setup_page = self._build_accounts_group(content)
+        self._intro_label = QtWidgets.QLabel(_INTRO_TEXT, column)
+        self._intro_label.setWordWrap(True)
+        self._intro_label.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
+        body.addWidget(self._intro_label)
+
+        self._pages = QtWidgets.QStackedWidget(column)
+        self._setup_page = self._build_accounts_group(column)
         self._pages.addWidget(self._setup_page)
-        self._heating_page = QtWidgets.QWidget(content)
+        self._heating_page = QtWidgets.QWidget(column)
         heating = QtWidgets.QVBoxLayout(self._heating_page)
         heating.setContentsMargins(0, 0, 0, 0)
-        heating.setSpacing(16)
+        heating.setSpacing(14)
         heating.addWidget(self._build_run_group(self._heating_page))
-        self._edit_setup = QtWidgets.QPushButton("Manage accounts", content)
+        self._edit_setup = QtWidgets.QPushButton("Manage accounts", column)
         self._edit_setup.clicked.connect(self._open_setup)
         heating.addWidget(self._edit_setup)
-        outer.addWidget(self._pages, 1)
-
-        self._status_label = QtWidgets.QLabel(RunnerState.Idle.value, content)
-        self._status_label.setAccessibleName("Cycle status")
-        self._status_label.setWordWrap(True)
-        heating.addWidget(self._status_label)
-
-        self._busy = QtWidgets.QProgressBar(content)
-        self._busy.setAccessibleName("Cycle progress")
-        self._busy.setRange(0, 0)  # indeterminate; no fake percentage
-        self._busy.setVisible(False)
-        heating.addWidget(self._busy)
-
-        self._log_label = QtWidgets.QLabel(
-            "Cycle log (technical details from the last run):", content
-        )
-        self._details_toggle = QtWidgets.QCheckBox("Show technical details", content)
-        heating.addWidget(self._details_toggle)
-        self._details = QtWidgets.QWidget(content)
-        details = QtWidgets.QVBoxLayout(self._details)
-        details.setContentsMargins(0, 0, 0, 0)
-        self._details_toggle.toggled.connect(self._details.setVisible)
-        self._details.hide()
-        heating.addWidget(self._details)
-        details.addWidget(self._log_label)
-        self._log = QtWidgets.QPlainTextEdit(content)
-        self._log.setAccessibleName("Cycle log")
-        self._log.setReadOnly(True)
-        self._log.setMaximumBlockCount(_LOG_MAX_BLOCKS)
-        self._log.setMinimumHeight(_LOG_MIN_HEIGHT)
-        self._log_label.setBuddy(self._log)
-        details.addWidget(self._log, stretch=1)
-
-        clear_row = QtWidgets.QHBoxLayout()
-        clear_row.addStretch(1)
-        self._clear_button = QtWidgets.QPushButton("Clear log", content)
-        self._clear_button.clicked.connect(self._log.clear)
-        clear_row.addWidget(self._clear_button)
-        details.addLayout(clear_row)
         heating.addStretch(1)
         self._pages.addWidget(self._heating_page)
+        body.addWidget(self._pages, 1)
+
+        self._setup_tray()
 
         # The guided setup needs more vertical space than small screens
         # offer; a scroll area keeps every control at its natural height
@@ -291,10 +322,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._help_menu = menu_bar.addMenu("Help")
         self._check_updates_action = self._help_menu.addAction("Check for updates")
         self._check_updates_action.triggered.connect(self._show_update_dialog)
+        self._about_action = self._help_menu.addAction("About Strom")
+        self._about_action.triggered.connect(self._show_about)
 
         # A non-modal notice when the automatic check finds a newer version:
         # it never steals focus and never blocks setup.
-        self._update_notice = QtWidgets.QWidget(content)
+        self._update_notice = QtWidgets.QWidget(column)
         notice_layout = QtWidgets.QHBoxLayout(self._update_notice)
         notice_layout.setContentsMargins(0, 0, 0, 0)
         self._update_notice_label = QtWidgets.QLabel("", self._update_notice)
@@ -305,7 +338,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_notice_button.clicked.connect(self._show_update_dialog)
         notice_layout.addWidget(self._update_notice_button)
         self._update_notice.hide()
-        outer.insertWidget(1, self._update_notice)
+        body.insertWidget(2, self._update_notice)
 
         self._build_tab_order()
 
@@ -365,12 +398,12 @@ class MainWindow(QtWidgets.QMainWindow):
         cycle_active = self._runner.is_active()
         update_block = self._updater.run_blocked() or self._run_blocked_by_update
         allow = not cycle_active and not update_block
+        setup_ready = self._setup_complete()
         if cycle_active:
             self._pages.setCurrentIndex(1)
         self._edit_setup.setEnabled(allow)
         self._busy.setVisible(cycle_active)
         for widget in (
-            self._country,
             self._city,
             self._language,
             self._custom_folder_toggle,
@@ -378,56 +411,114 @@ class MainWindow(QtWidgets.QMainWindow):
             self._browse_button,
             self._weather_key_edit,
             self._weather_save,
+            self._weather_test,
             self._price_key_edit,
             self._price_save,
+            self._price_test,
             self._tapo_email,
             self._tapo_password,
             self._tapo_ip,
             self._tapo_save,
+            self._tapo_test,
             self._horizon,
             self._log_level,
-            self._run_button,
         ):
             widget.setEnabled(allow)
+        self._run_button.setEnabled(allow and setup_ready)
+        self._run_button.setToolTip(
+            "" if setup_ready else self._translated("Finish setup to start heating.")
+        )
+        self._repeat_checkbox.setEnabled(allow and setup_ready)
+        self._finish_setup_button.setVisible(not setup_ready)
+        self._finish_setup_button.setEnabled(allow)
+        self._setup_later.setEnabled(allow)
+        self._back_button.setEnabled(
+            self._account_pages.currentIndex() > 0 and allow
+        )
+        self._next_button.setEnabled(allow)
+        if not self._runner.is_active():
+            if setup_ready:
+                self._status_label.setText(
+                    self._translated(_RUNNER_LABELS[self._runner.state])
+                )
+            else:
+                self._status_label.setText(self._translated("Setup needed"))
 
-    def _build_accounts_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        group = QtWidgets.QGroupBox("Set up Strom", parent)
-        group.setFlat(True)
-        layout = QtWidgets.QVBoxLayout(group)
-        layout.setSpacing(16)
-        self._step_label = QtWidgets.QLabel(group)
+    def _setup_complete(self) -> bool:
+        status = self._current_setup_status()
+        return (
+            status.weather_key_saved
+            and status.price_key_saved
+            and status.tapo_saved
+        )
+
+    def _set_detail(self, text: str, *, error: bool = False) -> None:
+        self._status_detail.setText(text)
+        self._status_detail.setStyleSheet(
+            f"color: {_ERROR_COLOR};" if error else ""
+        )
+        self._status_detail.setVisible(bool(text))
+
+    def _build_accounts_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        page = QtWidgets.QWidget(parent)
+        layout = QtWidgets.QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+
+        self._step_indicator = QtWidgets.QWidget(page)
+        indicator_row = QtWidgets.QHBoxLayout(self._step_indicator)
+        indicator_row.setContentsMargins(0, 0, 0, 0)
+        indicator_row.setSpacing(6)
+        self._step_buttons: list[QtWidgets.QPushButton] = []
+        for index, name in enumerate(_STEP_NAMES):
+            button = QtWidgets.QPushButton(name, self._step_indicator)
+            button.setFlat(True)
+            button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
+            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda _checked=False, step=index: self._show_step(step)
+            )
+            indicator_row.addWidget(button)
+            self._step_buttons.append(button)
+        indicator_row.addStretch(1)
+        layout.addWidget(self._step_indicator)
+
+        self._step_label = QtWidgets.QLabel(page)
         self._step_label.setAccessibleName("Setup progress")
+        self._step_label.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
         layout.addWidget(self._step_label)
-        self._account_pages = QtWidgets.QStackedWidget(group)
+
+        self._account_pages = QtWidgets.QStackedWidget(page)
         for builder in (
             self._build_location_block, self._build_weather_block,
             self._build_price_block, self._build_tapo_block
         ):
-            page = QtWidgets.QWidget(group)
-            page_layout = QtWidgets.QVBoxLayout(page)
+            step_page = QtWidgets.QWidget(page)
+            page_layout = QtWidgets.QVBoxLayout(step_page)
             page_layout.setContentsMargins(0, 0, 0, 0)
-            page_layout.addWidget(builder(page))
+            page_layout.addWidget(builder(step_page))
             page_layout.addStretch(1)
-            self._account_pages.addWidget(page)
+            self._account_pages.addWidget(step_page)
         layout.addWidget(self._account_pages, 1)
         navigation = QtWidgets.QHBoxLayout()
-        self._back_button = QtWidgets.QPushButton("Back", group)
+        self._back_button = QtWidgets.QPushButton("Back", page)
         self._back_button.clicked.connect(lambda: self._show_step(
             self._account_pages.currentIndex() - 1
         ))
-        self._next_button = QtWidgets.QPushButton("Continue", group)
+        self._next_button = QtWidgets.QPushButton("Continue", page)
+        self._next_button.setDefault(True)
         self._next_button.clicked.connect(self._continue_setup)
         navigation.addWidget(self._back_button)
         navigation.addStretch(1)
         navigation.addWidget(self._next_button)
         layout.addLayout(navigation)
-        self._setup_later = QtWidgets.QPushButton("Set up later", group)
+        self._setup_later = QtWidgets.QPushButton("Set up later", page)
         self._setup_later.setFlat(True)
         self._setup_later.clicked.connect(self._finish_setup)
         layout.addWidget(self._setup_later)
-        self._advanced_toggle = QtWidgets.QCheckBox("Advanced settings", group)
+        self._advanced_toggle = QtWidgets.QCheckBox("Advanced settings", page)
         layout.addWidget(self._advanced_toggle)
-        advanced = self._advanced_settings = QtWidgets.QWidget(group)
+        advanced = self._advanced_settings = QtWidgets.QWidget(page)
         layout.addWidget(advanced)
         self._advanced_toggle.toggled.connect(advanced.setVisible)
         advanced.hide()
@@ -436,22 +527,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # The folder is chosen for the user; the editor stays hidden unless
         # someone ticks the custom-folder toggle.
-        self._settings_folder_label = QtWidgets.QLabel("", group)
+        self._settings_folder_label = QtWidgets.QLabel("", advanced)
         self._settings_folder_label.setAccessibleName("Settings folder")
         self._settings_folder_label.setWordWrap(True)
         layout.addWidget(self._settings_folder_label)
 
-        self._folder_help = QtWidgets.QLabel(_FOLDER_HELP_TEXT, group)
+        self._folder_help = QtWidgets.QLabel(_FOLDER_HELP_TEXT, advanced)
         self._folder_help.setWordWrap(True)
         layout.addWidget(self._folder_help)
 
         self._custom_folder_toggle = QtWidgets.QCheckBox(
-            "Use a custom settings folder", group
+            "Use a custom settings folder", advanced
         )
         self._custom_folder_toggle.toggled.connect(self._on_custom_folder_toggled)
         layout.addWidget(self._custom_folder_toggle)
 
-        self._folder_row = QtWidgets.QWidget(group)
+        self._folder_row = QtWidgets.QWidget(advanced)
         row = QtWidgets.QHBoxLayout(self._folder_row)
         row.setContentsMargins(0, 0, 0, 0)
         self._config_dir_edit = QtWidgets.QLineEdit(self._folder_row)
@@ -462,28 +553,35 @@ class MainWindow(QtWidgets.QMainWindow):
         self._browse_button.clicked.connect(self._on_browse_clicked)
         row.addWidget(self._browse_button)
         layout.addWidget(self._folder_row)
-
-        self._config_dir_label = QtWidgets.QLabel("Settings folder:", group)
-        self._config_dir_label.setBuddy(self._config_dir_edit)
-        self._config_dir_label.hide()  # kept for the label-buddy assertion
         self._folder_row.hide()
 
         self._show_step(0)
-        return group
+        return page
 
     def _show_step(self, index: int) -> None:
+        index = max(0, min(index, self._account_pages.count() - 1))
         self._account_pages.setCurrentIndex(index)
-        names = ("Location and language", "Weather forecast",
-                 "Electricity prices", "Your smart plug")
         template = self._translated("Step {step} of 4 · {name}")
         self._step_label.setText(
-            template.format(step=index + 1, name=self._translated(names[index]))
+            template.format(
+                step=index + 1,
+                name=self._translated(_STEP_NAMES[index]),
+            )
         )
-        self._back_button.setEnabled(index > 0)
-        self._next_button.setText(self._translated("Finish setup" if index == 3 else "Continue"))
+        self._back_button.setEnabled(index > 0 and not self._runner.is_active())
+        self._next_button.setText(
+            self._translated("Finish setup" if index == 3 else "Continue")
+        )
         self._advanced_toggle.setVisible(index > 0)
-        self._advanced_settings.setVisible(index > 0 and self._advanced_toggle.isChecked())
-        fields = (self._country, self._weather_key_edit, self._price_key_edit, self._tapo_email)
+        self._advanced_settings.setVisible(
+            index > 0 and self._advanced_toggle.isChecked()
+        )
+        fields = (
+            self._city,
+            self._weather_key_edit,
+            self._price_key_edit,
+            self._tapo_email,
+        )
         fields[index].setFocus()
 
     def _continue_setup(self) -> None:
@@ -508,8 +606,14 @@ class MainWindow(QtWidgets.QMainWindow):
         status = self._current_setup_status()
         ready = (status.weather_key_saved, status.price_key_saved, status.tapo_saved)
         if not ready[account_index]:
-            (self._weather_status, self._price_status, self._tapo_status)[account_index].setText(
-                self._translated("Add your details to continue, or choose Set up later.")
+            chip = (self._weather_status, self._price_status,
+                    self._tapo_status)[account_index]
+            self._set_chip(
+                chip,
+                self._translated(
+                    "Add your details to continue, or choose Set up later."
+                ),
+                error=True,
             )
             return
         self.save_settings()
@@ -528,18 +632,39 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _open_setup(self) -> None:
         self._pages.setCurrentIndex(0)
-        self._show_step(0)
+        self._show_step(self._first_incomplete_step())
 
-    def _build_location_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
-        box = QtWidgets.QGroupBox("Location and language", parent)
+    def _first_incomplete_step(self) -> int:
+        if not self._city_is_valid():
+            return 0
+        status = self._current_setup_status()
+        ready = (
+            status.weather_key_saved,
+            status.price_key_saved,
+            status.tapo_saved,
+        )
+        if not any(ready) or all(ready):
+            return 0
+        return ready.index(False) + 1
+
+    def _build_location_block(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        box = QtWidgets.QWidget(parent)
         form = QtWidgets.QFormLayout(box)
-        self._country = QtWidgets.QComboBox(box)
-        self._country.addItem("España / Spain", "ES")
-        self._country.setAccessibleName("Country")
-        form.addRow("Country", self._country)
-        note = QtWidgets.QLabel("More countries are work in progress.", box)
+        note = QtWidgets.QLabel(
+            "Strom currently works in Spain. More countries are coming.", box
+        )
         note.setWordWrap(True)
+        note.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
         form.addRow(note)
+        needs = QtWidgets.QLabel(
+            "What you'll need: a free OpenWeatherMap key, an ENTSO-E token "
+            "(it can take a day to arrive by email), and your Tapo email, "
+            "password and plug IP address.",
+            box,
+        )
+        needs.setWordWrap(True)
+        needs.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
+        form.addRow(needs)
         self._city = QtWidgets.QComboBox(box)
         self._city.setEditable(True)
         self._city.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
@@ -563,18 +688,17 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow(hint)
         self._location_error = QtWidgets.QLabel("", box)
         self._location_error.setWordWrap(True)
+        self._location_error.setStyleSheet(f"color: {_ERROR_COLOR};")
         form.addRow(self._location_error)
-        self._language = QtWidgets.QComboBox(box)
-        self._language.addItem("English", "en")
-        self._language.addItem("Español", "es")
-        self._language.setAccessibleName("Language")
-        form.addRow("Language", self._language)
         self._city.currentTextChanged.connect(self._update_location_note)
         return box
 
-    def _valid_location(self) -> bool:
+    def _city_is_valid(self) -> bool:
         city = self._city.currentText().strip()
-        valid = bool(city) and not any(c in city for c in ",;\n\r")
+        return bool(city) and not any(c in city for c in ",;\n\r")
+
+    def _valid_location(self) -> bool:
+        valid = self._city_is_valid()
         self._location_error.setText("" if valid else self._translated(
             "Enter a city or village in Spain without a country suffix."
         ))
@@ -613,16 +737,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Cuántas horas planifica Strom por adelantado. Esto no alarga la "
                 "ejecución. Se recomiendan 24 horas."
             ),
-            _LOG_LEVEL_HELP_TEXT: (
-                "Detalle del registro: INFO muestra el progreso normal; WARNING "
-                "solo advertencias y errores; ERROR solo errores."
-            ),
-            _FOLDER_HELP_TEXT: (
-                "Las claves y los datos del enchufe se guardan en weather_api_key.txt, "
-                "price_api_key.txt y tapologin.env dentro de la carpeta indicada. "
-                "La carpeta se crea automáticamente. Si ya usas Strom, activa la "
-                "carpeta personalizada y elige la que contiene tus claves."
-            ),
         }
         return help_texts.get(text, SPANISH.get(text, text))
 
@@ -637,8 +751,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 if widget in (self._step_label, self._next_button, self._location_note,
                               self._checklist_label, self._settings_folder_label,
                               self._weather_status, self._price_status, self._tapo_status,
-                              self._location_error, self._status_label,
-                              self._update_notice_label):
+                              self._chip_weather, self._chip_price, self._chip_plug,
+                              self._status_label, self._status_detail,
+                              self._location_error, self._update_notice_label,
+                              *self._step_buttons):
                     continue
                 source = widget.property("sourceText") or widget.text()
                 widget.setProperty("sourceText", source)
@@ -648,12 +764,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.setProperty("sourcePlaceholder", source)
                 widget.setPlaceholderText(self._translated(source))
         self._horizon.setToolTip(self._translated(_HORIZON_HELP_TEXT))
+        self._repeat_checkbox.setToolTip(self._translated(_REPEAT_HELP_TEXT))
         self._help_menu.setTitle(self._translated("Help"))
+        self._language_label.setText(self._translated("Language"))
         self._check_updates_action.setText(self._translated("Check for updates"))
+        self._about_action.setText(self._translated("About Strom"))
         self._show_step(self._account_pages.currentIndex())
         self._refresh_setup_status()
-        self._status_label.setText(self._translated(self._runner.state.value))
         self._update_notice_button.setText(self._translated("Details…"))
+        if self._tray is not None:
+            if self._tray_open_action is not None:
+                self._tray_open_action.setText(self._translated("Open Strom"))
+            if self._tray_quit_action is not None:
+                self._tray_quit_action.setText(self._translated("Quit"))
         if self._update_dialog is not None:
             self._update_dialog.retranslate()
         self._update_location_note()
@@ -678,9 +801,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._weather_key_edit.setPlaceholderText("Paste your weather key here")
         grid.addWidget(self._weather_key_edit, 1, 0)
 
+        buttons = QtWidgets.QHBoxLayout()
         self._weather_save = QtWidgets.QPushButton("Save weather key", box)
         self._weather_save.clicked.connect(self._on_save_weather)
-        grid.addWidget(self._weather_save, 1, 1)
+        buttons.addWidget(self._weather_save)
+        self._weather_test = QtWidgets.QPushButton("Test", box)
+        self._weather_test.setToolTip(
+            "Ask OpenWeatherMap to check the key before you rely on it."
+        )
+        self._weather_test.clicked.connect(self._on_test_weather)
+        buttons.addWidget(self._weather_test)
+        grid.addLayout(buttons, 1, 1)
 
         self._weather_status = QtWidgets.QLabel("", box)
         self._weather_status.setWordWrap(True)
@@ -698,17 +829,25 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         self._price_key_edit = QtWidgets.QLineEdit(box)
-        self._price_key_edit.setAccessibleName("Electricity price API token")
+        self._price_key_edit.setAccessibleName("Electricity price API key")
         self._price_key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
         self._price_key_edit.setToolTip(
-            "Your token is hidden while typing; paste works normally."
+            "Your key is hidden while typing; paste works normally."
         )
-        self._price_key_edit.setPlaceholderText("Paste your electricity price token here")
+        self._price_key_edit.setPlaceholderText("Paste your electricity price key here")
         grid.addWidget(self._price_key_edit, 1, 0)
 
-        self._price_save = QtWidgets.QPushButton("Save price token", box)
+        buttons = QtWidgets.QHBoxLayout()
+        self._price_save = QtWidgets.QPushButton("Save price key", box)
         self._price_save.clicked.connect(self._on_save_price)
-        grid.addWidget(self._price_save, 1, 1)
+        buttons.addWidget(self._price_save)
+        self._price_test = QtWidgets.QPushButton("Test", box)
+        self._price_test.setToolTip(
+            "Ask ENTSO-E for recent prices to check the key."
+        )
+        self._price_test.clicked.connect(self._on_test_price)
+        buttons.addWidget(self._price_test)
+        grid.addLayout(buttons, 1, 1)
 
         self._price_status = QtWidgets.QLabel("", box)
         self._price_status.setWordWrap(True)
@@ -739,9 +878,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tapo_ip.setPlaceholderText("Plug IP address, e.g. 192.168.1.42")
         grid.addWidget(self._tapo_ip, 3, 0)
 
+        buttons = QtWidgets.QHBoxLayout()
         self._tapo_save = QtWidgets.QPushButton("Save plug details", box)
         self._tapo_save.clicked.connect(self._on_save_tapo)
-        grid.addWidget(self._tapo_save, 4, 0)
+        buttons.addWidget(self._tapo_save)
+        self._tapo_test = QtWidgets.QPushButton("Test", box)
+        self._tapo_test.setToolTip(
+            "Try to reach the plug on your network with these details."
+        )
+        self._tapo_test.clicked.connect(self._on_test_tapo)
+        buttons.addWidget(self._tapo_test)
+        grid.addLayout(buttons, 4, 0, 1, 2)
 
         self._tapo_status = QtWidgets.QLabel("", box)
         self._tapo_status.setWordWrap(True)
@@ -759,7 +906,7 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> None:
         descriptions = {
             _WEATHER_HELP_TEXT: "Add a weather key so Strom can plan for colder hours.",
-            _PRICE_HELP_TEXT: "Add a price token so Strom can find cheaper hours.",
+            _PRICE_HELP_TEXT: "Add a price key so Strom can find cheaper hours.",
             _TAPO_HELP_TEXT: "Connect the Tapo plug that your heater uses.",
         }
         label = QtWidgets.QLabel(descriptions.get(help_text, ""), box)
@@ -774,41 +921,52 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_run_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Your heating", parent)
         layout = QtWidgets.QVBoxLayout(group)
+        layout.setSpacing(10)
+
+        self._status_label = QtWidgets.QLabel(
+            self._translated(_RUNNER_LABELS[RunnerState.Idle]), group
+        )
+        self._status_label.setAccessibleName("Cycle status")
+        self._status_label.setWordWrap(True)
+        status_font = self._status_label.font()
+        status_font.setBold(True)
+        self._status_label.setFont(status_font)
+        layout.addWidget(self._status_label)
+
+        self._status_detail = QtWidgets.QLabel("", group)
+        self._status_detail.setWordWrap(True)
+        self._status_detail.setForegroundRole(
+            QtGui.QPalette.ColorRole.PlaceholderText
+        )
+        self._status_detail.setVisible(False)
+        layout.addWidget(self._status_detail)
+
+        self._busy = QtWidgets.QProgressBar(group)
+        self._busy.setAccessibleName("Cycle progress")
+        self._busy.setRange(0, 0)  # indeterminate; no fake percentage
+        self._busy.setVisible(False)
+        layout.addWidget(self._busy)
 
         self._checklist_label = QtWidgets.QLabel("", group)
         self._checklist_label.setAccessibleName("Setup checklist")
         self._checklist_label.setWordWrap(True)
         layout.addWidget(self._checklist_label)
 
-        form = QtWidgets.QFormLayout()
-        layout.addLayout(form)
+        chips = QtWidgets.QHBoxLayout()
+        chips.setSpacing(8)
+        self._chip_weather = self._make_chip(group)
+        self._chip_price = self._make_chip(group)
+        self._chip_plug = self._make_chip(group)
+        chips.addWidget(self._chip_weather)
+        chips.addWidget(self._chip_price)
+        chips.addWidget(self._chip_plug)
+        chips.addStretch(1)
+        layout.addLayout(chips)
 
-        self._horizon = QtWidgets.QSpinBox(group)
-        self._horizon.setRange(_MIN_HORIZON, _MAX_HORIZON)
-        self._horizon.setValue(_DEFAULT_HORIZON)
-        self._horizon.setToolTip(_HORIZON_HELP_TEXT)
-        self._horizon_label = QtWidgets.QLabel(
-            "How far ahead to plan (hours):", group
-        )
-        self._horizon_label.setBuddy(self._horizon)
-        form.addRow(self._horizon_label, self._horizon)
-
-        self._log_level = QtWidgets.QComboBox(group)
-        self._log_level.addItems(_LOG_LEVELS)
-        self._log_level_label = QtWidgets.QLabel("Log detail:", group)
-        self._log_level_label.setBuddy(self._log_level)
-        self._options_toggle = QtWidgets.QCheckBox("More options", group)
-        layout.addWidget(self._options_toggle)
-        options = QtWidgets.QWidget(group)
-        option_form = QtWidgets.QFormLayout(options)
-        option_form.setContentsMargins(0, 0, 0, 0)
-        option_form.addRow(self._log_level_label, self._log_level)
-        layout.addWidget(options)
-        self._options_toggle.toggled.connect(options.setVisible)
-        options.hide()
-        self._log_level_help = QtWidgets.QLabel(_LOG_LEVEL_HELP_TEXT, group)
-        self._log_level_help.setWordWrap(True)
-        option_form.addRow(self._log_level_help)
+        self._finish_setup_button = QtWidgets.QPushButton("Finish setup", group)
+        self._finish_setup_button.clicked.connect(self._open_setup)
+        self._finish_setup_button.setVisible(False)
+        layout.addWidget(self._finish_setup_button)
 
         self._location_note = QtWidgets.QLabel(_LOCATION_NOTE_TEXT, group)
         self._location_note.setWordWrap(True)
@@ -818,30 +976,110 @@ class MainWindow(QtWidgets.QMainWindow):
         self._cycle_label.setWordWrap(True)
         layout.addWidget(self._cycle_label)
 
-        self._run_button = QtWidgets.QPushButton("Run one cycle", group)
+        self._run_button = QtWidgets.QPushButton(
+            "Start heating for the next hour", group
+        )
+        self._run_button.setDefault(True)
         self._run_button.clicked.connect(self._on_run_clicked)
         layout.addWidget(self._run_button)
+
+        self._repeat_checkbox = QtWidgets.QCheckBox(
+            "Keep running automatically", group
+        )
+        self._repeat_checkbox.setToolTip(_REPEAT_HELP_TEXT)
+        layout.addWidget(self._repeat_checkbox)
+
+        self._options_toggle = QtWidgets.QCheckBox("More options", group)
+        layout.addWidget(self._options_toggle)
+        options = QtWidgets.QWidget(group)
+        option_form = QtWidgets.QFormLayout(options)
+        option_form.setContentsMargins(0, 0, 0, 0)
+
+        self._horizon = QtWidgets.QSpinBox(group)
+        self._horizon.setRange(_MIN_HORIZON, _MAX_HORIZON)
+        self._horizon.setValue(_DEFAULT_HORIZON)
+        self._horizon.setToolTip(_HORIZON_HELP_TEXT)
+        self._horizon_label = QtWidgets.QLabel("Plan ahead (hours):", group)
+        self._horizon_label.setBuddy(self._horizon)
+        option_form.addRow(self._horizon_label, self._horizon)
+
+        self._log_level = QtWidgets.QComboBox(group)
+        self._log_level.addItems(_LOG_LEVELS)
+        self._log_level_label = QtWidgets.QLabel("Log detail:", group)
+        self._log_level_label.setBuddy(self._log_level)
+        option_form.addRow(self._log_level_label, self._log_level)
+
+        self._log_level_help = QtWidgets.QLabel(_LOG_LEVEL_HELP_TEXT, group)
+        self._log_level_help.setWordWrap(True)
+        option_form.addRow(self._log_level_help)
+        layout.addWidget(options)
+        self._options_toggle.toggled.connect(options.setVisible)
+        options.hide()
+
+        self._details_toggle = QtWidgets.QCheckBox(
+            "Show technical details", group
+        )
+        layout.addWidget(self._details_toggle)
+        self._details = QtWidgets.QWidget(group)
+        details = QtWidgets.QVBoxLayout(self._details)
+        details.setContentsMargins(0, 0, 0, 0)
+        self._details_toggle.toggled.connect(self._details.setVisible)
+        self._details.hide()
+        layout.addWidget(self._details)
+        self._log_label = QtWidgets.QLabel(
+            "Activity log (technical details from the last run):", group
+        )
+        details.addWidget(self._log_label)
+        self._log = QtWidgets.QPlainTextEdit(group)
+        self._log.setAccessibleName("Activity log")
+        self._log.setReadOnly(True)
+        self._log.setMaximumBlockCount(_LOG_MAX_BLOCKS)
+        self._log.setMinimumHeight(_LOG_MIN_HEIGHT)
+        self._log_label.setBuddy(self._log)
+        details.addWidget(self._log, stretch=1)
+
+        clear_row = QtWidgets.QHBoxLayout()
+        clear_row.addStretch(1)
+        self._clear_button = QtWidgets.QPushButton("Clear log", group)
+        self._clear_button.clicked.connect(self._log.clear)
+        clear_row.addWidget(self._clear_button)
+        details.addLayout(clear_row)
         return group
+
+    @staticmethod
+    def _make_chip(parent: QtWidgets.QWidget) -> QtWidgets.QLabel:
+        chip = QtWidgets.QLabel("", parent)
+        chip.setWordWrap(True)
+        chip.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        chip.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
+        chip.setContentsMargins(6, 2, 6, 2)
+        font = chip.font()
+        font.setPointSize(max(1, font.pointSize() - 1))
+        chip.setFont(font)
+        return chip
 
     def _build_tab_order(self) -> None:
         order = (
-            self._country,
-            self._city,
             self._language,
+            self._city,
             self._custom_folder_toggle,
             self._config_dir_edit,
             self._browse_button,
             self._weather_key_edit,
             self._weather_save,
+            self._weather_test,
             self._price_key_edit,
             self._price_save,
+            self._price_test,
             self._tapo_email,
             self._tapo_password,
             self._tapo_ip,
             self._tapo_save,
+            self._tapo_test,
             self._horizon,
             self._log_level,
             self._run_button,
+            self._repeat_checkbox,
             self._log,
             self._clear_button,
         )
@@ -896,6 +1134,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(level, str) and level in _LOG_LEVELS:
             self._log_level.setCurrentText(level)
 
+        repeat = self._settings.value("repeatAutomatically", True)
+        self._repeat_checkbox.setChecked(repeat not in (False, 0, "0", "false"))
+
         geometry = self._settings.value("geometry")
         if isinstance(geometry, QtCore.QByteArray) and not geometry.isEmpty():
             if not self.restoreGeometry(geometry):
@@ -916,6 +1157,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._settings.setValue("configDir", self._config_dir_edit.text().strip())
         self._settings.setValue("horizonHours", self._horizon.value())
         self._settings.setValue("logLevel", self._log_level.currentText())
+        self._settings.setValue(
+            "repeatAutomatically", self._repeat_checkbox.isChecked()
+        )
         if self._valid_location():
             self._settings.setValue("city", self._city.currentText().strip())
         self._settings.setValue("country", "ES")
@@ -928,11 +1172,9 @@ class MainWindow(QtWidgets.QMainWindow):
     @staticmethod
     def _empty_status() -> SetupStatus:
         return SetupStatus(
-            directory_exists=False,
             weather_key_saved=False,
             price_key_saved=False,
             tapo_saved=False,
-            house_config_present=False,
         )
 
     def _current_setup_status(self) -> SetupStatus:
@@ -957,48 +1199,104 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _refresh_setup_status(self) -> None:
         raw = self._config_dir_edit.text().strip()
+        shown = raw if raw else self._translated("(none chosen)")
         self._settings_folder_label.setText(
-            "Settings folder: " + (raw if raw else "(none chosen)")
+            self._translated("Settings folder: {path}").format(path=shown)
         )
         if not raw:
             self._checklist_label.setText(self._translated("Choose a settings folder to begin."))
+        elif self._missing_setup_items():
+            self._checklist_label.setText(self._translated("Not ready yet."))
         else:
-            missing = self._missing_setup_items()
-            if missing:
-                self._checklist_label.setText(
-                    self._translated(
-                        "Not ready yet: missing {items}. Choose Manage accounts to finish setup."
-                    ).format(
-                        items=", ".join(self._translated(item) for item in missing))
-                )
-            else:
-                self._checklist_label.setText(
-                    self._translated(
-                        "All set — account details available. You can run a heating cycle."
-                    )
-                )
+            self._checklist_label.setText(
+                self._translated("All set. Start heating when you like.")
+            )
         status = self._current_setup_status()
         for chip, done in (
             (self._weather_status, status.weather_key_saved),
             (self._price_status, status.price_key_saved),
             (self._tapo_status, status.tapo_saved),
         ):
-            chip.setText(self._translated("Saved ✓" if done else "Not set yet"))
+            self._set_chip(
+                chip,
+                self._translated("Saved, not tested" if done else "Not set yet"),
+            )
+        self._update_heating_chips(status)
+        self._update_step_indicator(status)
+        self._refresh_controls()
+
+    def _update_heating_chips(self, status: SetupStatus) -> None:
+        chips = (
+            (self._chip_weather, status.weather_key_saved,
+             "Weather key ✓", "Weather key missing"),
+            (self._chip_price, status.price_key_saved,
+             "Price key ✓", "Price key missing"),
+            (self._chip_plug, status.tapo_saved,
+             "Plug account ✓", "Plug account missing"),
+        )
+        for chip, done, ready_text, missing_text in chips:
+            chip.setText(
+                self._translated(ready_text if done else missing_text)
+            )
+
+    def _update_step_indicator(self, status: SetupStatus) -> None:
+        done = (
+            self._city_is_valid(),
+            status.weather_key_saved,
+            status.price_key_saved,
+            status.tapo_saved,
+        )
+        for index, (button, name, complete) in enumerate(
+            zip(self._step_buttons, _STEP_SHORT_NAMES, done), start=1
+        ):
+            text = f"{index} {self._translated(name)}"
+            button.setText(f"{text} ✓" if complete else text)
+
+    def _set_chip(
+        self, chip: QtWidgets.QLabel, text: str, *, error: bool = False
+    ) -> None:
+        chip.setText(text)
+        chip.setStyleSheet(f"color: {_ERROR_COLOR};" if error else "")
+
+    def _setup_error_text(self, exc: SetupError) -> str:
+        """Translate a setup validation message, including its values."""
+        if exc.code == "bad_ip":
+            template = (
+                "'{value}' does not look like an IP address. "
+                "The Tapo app shows it under the plug's device information."
+            )
+            return self._translated(template).format(**exc.params)
+        return self._translated(str(exc))
 
     def _prepared_dir_for_save(self, chip: QtWidgets.QLabel) -> Path | None:
         raw = self._config_dir_edit.text().strip()
         if not raw:
-            chip.setText("Choose a settings folder first.")
+            self._set_chip(
+                chip, self._translated("Choose a settings folder first."),
+                error=True,
+            )
             return None
         try:
             config_dir = Path(raw).expanduser().resolve()
             if not config_dir.is_dir():
                 config_dir.mkdir(parents=True, exist_ok=True)
         except FileExistsError:
-            chip.setText(f"That path is an existing file, not a folder: {raw}")
+            self._set_chip(
+                chip,
+                self._translated(
+                    "That path is an existing file, not a folder: {path}"
+                ).format(path=raw),
+                error=True,
+            )
             return None
         except (OSError, RuntimeError) as exc:
-            chip.setText(f"Could not use the settings folder: {exc}")
+            self._set_chip(
+                chip,
+                self._translated(
+                    "Could not use the settings folder: {error}"
+                ).format(error=exc),
+                error=True,
+            )
             return None
         return config_dir
 
@@ -1013,13 +1311,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 "weather key",
             )
         except SetupError as exc:
-            chip.setText(str(exc))
+            self._set_chip(chip, self._setup_error_text(exc), error=True)
             return
         except OSError as exc:
-            chip.setText(f"Could not save the weather key: {exc}")
+            self._set_chip(
+                chip,
+                self._translated(
+                    "Could not save the weather key: {error}"
+                ).format(error=exc),
+                error=True,
+            )
             return
         self._weather_key_edit.clear()
-        chip.setText(self._translated("Saved ✓"))
+        self._set_chip(chip, self._translated("Saved, not tested"))
         self._append_log(f"Weather key saved to {path}")
         self._refresh_setup_status()
 
@@ -1034,14 +1338,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 "electricity price key",
             )
         except SetupError as exc:
-            chip.setText(str(exc))
+            self._set_chip(chip, self._setup_error_text(exc), error=True)
             return
         except OSError as exc:
-            chip.setText(f"Could not save the price token: {exc}")
+            self._set_chip(
+                chip,
+                self._translated(
+                    "Could not save the price key: {error}"
+                ).format(error=exc),
+                error=True,
+            )
             return
         self._price_key_edit.clear()
-        chip.setText(self._translated("Saved ✓"))
-        self._append_log(f"Electricity price token saved to {path}")
+        self._set_chip(chip, self._translated("Saved, not tested"))
+        self._append_log(f"Electricity price key saved to {path}")
         self._refresh_setup_status()
 
     def _on_save_tapo(self) -> None:
@@ -1057,17 +1367,119 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._tapo_ip.text(),
             )
         except SetupError as exc:
-            chip.setText(str(exc))
+            self._set_chip(chip, self._setup_error_text(exc), error=True)
             return
         except OSError as exc:
-            chip.setText(f"Could not save the plug details: {exc}")
+            self._set_chip(
+                chip,
+                self._translated(
+                    "Could not save the plug details: {error}"
+                ).format(error=exc),
+                error=True,
+            )
             return
         self._tapo_email.clear()
         self._tapo_password.clear()
         self._tapo_ip.clear()
-        chip.setText(self._translated("Saved ✓"))
+        self._set_chip(chip, self._translated("Saved, not tested"))
         self._append_log(f"Plug account saved to {path}")
         self._refresh_setup_status()
+
+    # --- credential checks (test buttons) ---
+
+    def _saved_key(self, file_name: str, env_var: str) -> str | None:
+        """The environment key when set, else the saved file, else None."""
+        value = os.getenv(env_var, "").strip()
+        if value:
+            return value
+        raw = self._config_dir_edit.text().strip()
+        if not raw:
+            return None
+        try:
+            content = (
+                Path(raw).expanduser() / file_name
+            ).read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+        return content or None
+
+    def _on_test_weather(self) -> None:
+        key = self._weather_key_edit.text().strip() or self._saved_key(
+            WEATHER_FILE, "WEATHER_API_KEY"
+        )
+        if not key:
+            self._set_chip(
+                self._weather_status,
+                self._translated("Paste the key first, then test it."),
+                error=True,
+            )
+            return
+        city = self._city.currentText().strip()
+        self._weather_test.setEnabled(False)
+        self._set_chip(self._weather_status, self._translated("Testing…"))
+        self._checker.check_weather(key, (city + ", ES") if city else "Barcelona, ES")
+
+    def _on_weather_checked(self, ok: bool, message: str) -> None:
+        self._weather_test.setEnabled(True)
+        if ok:
+            self._set_chip(self._weather_status, self._translated("Works ✓"))
+        else:
+            self._set_chip(self._weather_status, message, error=True)
+
+    def _on_test_price(self) -> None:
+        key = self._price_key_edit.text().strip() or self._saved_key(
+            PRICE_FILE, "PRICE_API_KEY"
+        )
+        if not key:
+            self._set_chip(
+                self._price_status,
+                self._translated("Paste the key first, then test it."),
+                error=True,
+            )
+            return
+        self._price_test.setEnabled(False)
+        self._set_chip(self._price_status, self._translated("Testing…"))
+        self._checker.check_price(key)
+
+    def _on_price_checked(self, ok: bool, message: str) -> None:
+        self._price_test.setEnabled(True)
+        if ok:
+            self._set_chip(self._price_status, self._translated("Works ✓"))
+        else:
+            self._set_chip(self._price_status, message, error=True)
+
+    def _tapo_values(self) -> tuple[str, str, str] | None:
+        email = self._tapo_email.text().strip() or os.getenv("EMAIL", "").strip()
+        password = self._tapo_password.text().strip() or os.getenv("PASSWORD", "").strip()
+        device_ip = self._tapo_ip.text().strip() or os.getenv("DEVICEIP", "").strip()
+        if email and password and device_ip:
+            return email, password, device_ip
+        raw = self._config_dir_edit.text().strip()
+        if raw:
+            saved = read_tapo_credentials(Path(raw).expanduser())
+            if saved is not None:
+                return saved
+        return None
+
+    def _on_test_tapo(self) -> None:
+        values = self._tapo_values()
+        if values is None:
+            self._set_chip(
+                self._tapo_status,
+                self._translated("Save the plug details first, then test them."),
+                error=True,
+            )
+            return
+        self._tapo_test.setEnabled(False)
+        self._set_chip(self._tapo_status, self._translated("Testing…"))
+        self._checker.check_plug(*values)
+
+    def _on_plug_checked(self, ok: bool, message: str) -> None:
+        self._tapo_test.setEnabled(True)
+        if ok:
+            self._set_chip(self._tapo_status, self._translated("Plug found ✓"))
+        else:
+            self._set_chip(self._tapo_status, message, error=True)
 
     def _show_help(self, text: str, url: str | None = None) -> None:
         """Static guidance with an optional button for the sign-up page."""
@@ -1095,24 +1507,33 @@ class MainWindow(QtWidgets.QMainWindow):
         # An empty result (cancelled or closed dialog) preserves the old value.
         chosen = QFileDialog.getExistingDirectory(
             self,
-            "Select settings folder",
+            self._translated("Select settings folder"),
             self._config_dir_edit.text().strip(),
         )
         if chosen:
             self._config_dir_edit.setText(chosen)
 
     def _on_run_clicked(self) -> None:
+        self._start_cycle(confirm=True)
+
+    def _start_cycle(self, *, confirm: bool) -> None:
         # The guard is enforced here regardless of any widget's enabled
         # state, so queued clicks cannot start a cycle during an update.
+        self._repeat_timer.stop()
         if self._updater.run_blocked() or self._run_blocked_by_update:
-            self._status_label.setText(self._translated(_RUN_BLOCKED_TEXT))
+            self._set_detail(self._translated(_RUN_BLOCKED_TEXT), error=True)
+            return
+        if not self._setup_complete():
+            self._open_setup()
             return
         if not self._valid_location():
             self._open_setup()
             return
         raw = self._config_dir_edit.text().strip()
         if not raw:
-            self._status_label.setText("Choose a settings folder first.")
+            self._set_detail(
+                self._translated("Choose a settings folder first."), error=True
+            )
             return
         try:
             config_dir = Path(raw).expanduser().resolve()
@@ -1122,56 +1543,124 @@ class MainWindow(QtWidgets.QMainWindow):
                 # already anyway.
                 config_dir.mkdir(parents=True, exist_ok=True)
         except FileExistsError:
-            self._status_label.setText(
-                f"That path is an existing file, not a folder: {raw}"
+            self._set_detail(
+                self._translated(
+                    "That path is an existing file, not a folder: {path}"
+                ).format(path=raw),
+                error=True,
             )
             return
         except (OSError, RuntimeError) as exc:
-            self._status_label.setText(
-                f"Could not create the settings folder: {exc}"
+            self._set_detail(
+                self._translated(
+                    "Could not create the settings folder: {error}"
+                ).format(error=exc),
+                error=True,
             )
             return
         if not config_dir.is_dir():
-            self._status_label.setText(
-                f"The settings folder is not a directory: {raw}"
+            self._set_detail(
+                self._translated(
+                    "The settings folder is not a directory: {path}"
+                ).format(path=raw),
+                error=True,
             )
             return
-        if not self._confirm_run():
+        if confirm and not self._confirm_run():
             return
         # Persist and display the exact absolute path used by the child. This
         # prevents a saved relative path from changing meaning when the GUI is
         # later launched from another working directory.
         self._config_dir_edit.setText(str(config_dir))
+        self._report_path = self._new_report_path()
         spec = self._spec_factory(
             config_dir, self._horizon.value(), self._log_level.currentText()
         )
         if self._spec_factory is make_launch_spec:
-            spec = replace(spec, arguments=spec.arguments + (
+            arguments = spec.arguments + (
                 "--city", self._city.currentText().strip() + ", ES",
-            ))
+            )
+            if self._report_path is not None:
+                arguments = arguments + ("--report-file", self._report_path)
+            spec = replace(spec, arguments=arguments)
         if self._runner.start(spec):
             # Persist the accepted, non-secret form values.
             self.save_settings()
+            self._run_started = time.monotonic()
+            self._elapsed_timer.start()
+            self._set_detail("")
+
+    def _start_repeat(self) -> None:
+        if self._repeat_checkbox.isChecked():
+            self._start_cycle(confirm=False)
+
+    @staticmethod
+    def _new_report_path() -> str:
+        fd, raw = tempfile.mkstemp(prefix="strom-report-", suffix=".json")
+        os.close(fd)
+        return raw
+
+    def _read_report(self) -> dict | None:
+        path, self._report_path = self._report_path, None
+        if path is None:
+            return None
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        finally:
+            try:
+                Path(path).unlink()
+            except OSError:
+                pass
+        return payload if isinstance(payload, dict) else None
+
+    def _summary_text(self, report: dict | None) -> str:
+        if not report:
+            return ""
+        try:
+            on_minutes = round(float(report["on_seconds"]) / 60.0)
+            interval_minutes = round(float(report["interval_seconds"]) / 60.0)
+        except (KeyError, TypeError, ValueError):
+            return ""
+        text = self._translated(
+            "Heater on for {on} of {interval} minutes."
+        ).format(on=on_minutes, interval=interval_minutes)
+        cost = report.get("estimated_cost_eur")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            text += " " + self._translated(
+                "Estimated cost: {cost} EUR."
+            ).format(cost=f"{float(cost):.2f}")
+        return text
+
+    def _tick_elapsed(self) -> None:
+        if self._run_started is None or not self._runner.is_active():
+            return
+        minutes = int((time.monotonic() - self._run_started) // 60)
+        self._set_detail(
+            self._translated(
+                "Usually about one hour. {minutes} min elapsed so far."
+            ).format(minutes=minutes)
+        )
 
     def _confirm_run(self) -> bool:
         """Product confirmation for physical actuation; Cancel is the default."""
         text = self._translated(_CONFIRM_TEXT)
-        missing = self._missing_setup_items()
-        if missing:
-            text += (
-                "\n\nSetup is not finished yet: missing "
-                + ", ".join(missing)
-                + ". Strom will probably fail until setup is complete, but "
-                "you can run anyway."
+        if self._repeat_checkbox.isChecked():
+            text += "\n\n" + self._translated(
+                "Automatic repeats are on: Strom starts the next run when "
+                "this one finishes."
             )
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle(self._translated("Run one cycle"))
-        box.setText(self._translated(text))
+        box.setWindowTitle(self._translated("Start heating"))
+        box.setText(self._translated(_CONFIRM_TEXT))
         run_button = box.addButton(
-            self._translated("Run one cycle"), QtWidgets.QMessageBox.ButtonRole.AcceptRole
+            self._translated("Start heating"),
+            QtWidgets.QMessageBox.ButtonRole.AcceptRole,
         )
         cancel_button = box.addButton(
-            self._translated("Cancel"), QtWidgets.QMessageBox.ButtonRole.RejectRole
+            self._translated("Cancel"),
+            QtWidgets.QMessageBox.ButtonRole.RejectRole,
         )
         box.setDefaultButton(cancel_button)
         box.exec()
@@ -1179,7 +1668,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _explain_refused_close(self) -> None:
         box = QtWidgets.QMessageBox(self)
-        box.setWindowTitle("Cycle in progress")
+        box.setWindowTitle(self._translated("Cycle in progress"))
         box.setText(self._translated(_CLOSE_REFUSED_TEXT))
         ok_button = box.addButton(
             "OK", QtWidgets.QMessageBox.ButtonRole.AcceptRole
@@ -1187,15 +1676,127 @@ class MainWindow(QtWidgets.QMainWindow):
         box.setDefaultButton(ok_button)
         box.exec()
 
+    # --- tray ---
+
+    def _setup_tray(self) -> None:
+        if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray = None
+            return
+        icon = QtGui.QIcon()
+        assets = Path(__file__).with_name("assets")
+        for size in (32, 48, 64, 128, 256, 512):
+            icon.addFile(str(assets / f"strom-{size}.png"))
+        tray = QtWidgets.QSystemTrayIcon(icon, self)
+        tray.setToolTip("Strom")
+        menu = QtWidgets.QMenu(self)
+        self._tray_open_action = menu.addAction("Open Strom")
+        self._tray_open_action.triggered.connect(self._restore_from_tray)
+        self._tray_quit_action = menu.addAction("Quit")
+        self._tray_quit_action.triggered.connect(self._quit_requested)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_tray_activated)
+        tray.show()
+        app = QtWidgets.QApplication.instance()
+        if isinstance(app, QtWidgets.QApplication):
+            app.setQuitOnLastWindowClosed(False)
+        self._tray = tray
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason in (
+            QtWidgets.QSystemTrayIcon.ActivationReason.Trigger,
+            QtWidgets.QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._restore_from_tray()
+
+    def _restore_from_tray(self) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _quit_requested(self) -> None:
+        if self._runner.is_active():
+            self._quit_after_run = True
+            if self._tray is not None:
+                self._tray.showMessage(
+                    "Strom",
+                    self._translated("Strom will quit after this run finishes."),
+                    QtWidgets.QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
+            return
+        self.save_settings()
+        QtWidgets.QApplication.quit()
+
+    def _show_about(self) -> None:
+        from strom.linux_gui.app_identity import runtime_version
+
+        version = runtime_version()
+        text = self._translated(
+            "Strom {version}\n\nSmart heating that plans around cheap electricity."
+        ).format(version=version if version is not None else "?")
+        box = QtWidgets.QMessageBox(self)
+        box.setWindowTitle(self._translated("About Strom"))
+        box.setText(text)
+        page_button = box.addButton(
+            self._translated("Open the release page"),
+            QtWidgets.QMessageBox.ButtonRole.ActionRole,
+        )
+        ok_button = box.addButton(
+            "OK", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+        )
+        box.setDefaultButton(ok_button)
+        box.exec()
+        if box.clickedButton() is page_button:
+            QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
+
     # --- runner bindings ---
 
     def _on_runner_state(self, state: RunnerState) -> None:
-        detail = self._runner.detail
-        if detail is not None and state in (RunnerState.Failed, RunnerState.FailedToStart):
-            self._status_label.setText(f"{state.value}: {detail}")
-        else:
-            self._status_label.setText(self._translated(state.value))
+        if state in (RunnerState.Starting, RunnerState.Running):
+            self._cycle_seen_active = True
+        if state in (
+            RunnerState.Completed, RunnerState.Failed, RunnerState.FailedToStart
+        ) and self._cycle_seen_active:
+            self._cycle_seen_active = False
+            self._handle_finished(state)
+        self._status_label.setText(self._translated(_RUNNER_LABELS[state]))
+        if state in (RunnerState.Failed, RunnerState.FailedToStart):
+            parts = [p for p in (self._runner.detail, self._finish_note) if p]
+            if parts:
+                self._set_detail(" ".join(parts), error=True)
+        elif state is RunnerState.Idle:
+            self._set_detail("")
+        self._finish_note = ""
         self._refresh_controls()
+
+    def _handle_finished(self, state: RunnerState) -> None:
+        self._elapsed_timer.stop()
+        self._run_started = None
+        if self._quit_after_run:
+            QtWidgets.QApplication.quit()
+            return
+        summary = ""
+        report = self._read_report()
+        if state is RunnerState.Completed:
+            summary = self._summary_text(report)
+        if self._repeat_checkbox.isChecked():
+            if state is RunnerState.Completed:
+                self._repeat_timer.start(_REPEAT_DELAY_MS)
+            else:
+                self._repeat_checkbox.setChecked(False)
+                self._finish_note = self._translated(
+                    "Automatic repeats stopped after a failed run."
+                )
+                summary = f"{summary} {self._finish_note}".strip()
+        if summary:
+            self._set_detail(summary)
+        if self._tray is not None and not self.isVisible():
+            self._tray.showMessage(
+                "Strom",
+                summary or self._translated(_RUNNER_LABELS[state]),
+                QtWidgets.QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
 
     def _append_log(self, text: str) -> None:
         self._log.appendPlainText(text.rstrip("\n"))
@@ -1204,9 +1805,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self._runner.is_active():
-            # Refuse without touching the child: no waitForFinished, no kill,
-            # no detach. The runner (and its QProcess) stays owned by this
-            # window until the cycle exits on its own.
+            # Never touch the child: no waitForFinished, no kill, no detach.
+            # With a tray the window hides and the run keeps going; without
+            # one the close is refused so the run cannot be lost by accident.
+            if self._tray is not None:
+                self.save_settings()
+                self.hide()
+                self._tray.showMessage(
+                    "Strom",
+                    self._translated("Strom keeps running in the background."),
+                    QtWidgets.QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
+                event.ignore()
+                return
             self._explain_refused_close()
             event.ignore()
             return
@@ -1217,6 +1829,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if self._updater.state is not UpdateState.Restarting:
             self.save_settings()
+        if self._tray is not None:
+            self.hide()
+            QtWidgets.QApplication.quit()
         event.accept()
 
     def _explain_update_refusal(self, reason: str) -> None:

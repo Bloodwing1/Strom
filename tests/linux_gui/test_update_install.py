@@ -65,7 +65,6 @@ def test_updater_owned_names_beside_target(tmp_path):
     target = _fake_appimage(tmp_path / "Strom-0.3.0-x86_64.AppImage")
     assert update_install.journal_path(target).name == ".Strom-0.3.0-x86_64.AppImage.journal"
     assert update_install.update_lock_path(target).name.endswith(".update-lock")
-    assert update_install.instance_lock_path(target).name.endswith(".instance-lock")
 
 
 def test_is_owned_path_rejects_foreign_paths(tmp_path):
@@ -251,6 +250,26 @@ def test_prepare_refuses_when_disk_is_full(tmp_path, monkeypatch):
         )
 
 
+def test_prepare_journal_failure_removes_the_backup(tmp_path, monkeypatch):
+    target = _fake_appimage(tmp_path / "Strom.AppImage", tag="old")
+    identity = _identity(target)
+    staging = tmp_path / ".Strom.AppImage.staging-test1"
+    staging.write_bytes(b"new")
+    staging.chmod(0o644)
+
+    def fail_journal(*_args, **_kw):
+        raise update_install.TransactionError("journal write failed")
+
+    monkeypatch.setattr(update_install, "write_journal", fail_journal)
+    with pytest.raises(update_install.TransactionError):
+        update_install.prepare_transaction(
+            identity, _release(), staging, staging.stat().st_size,
+            update_install.file_sha256(staging),
+        )
+    assert not [p for p in tmp_path.iterdir() if ".backup-" in p.name]
+    assert staging.exists()  # owned by the caller until it discards it
+
+
 def test_prepare_falls_back_to_copy_when_links_fail(tmp_path, monkeypatch):
     target = _fake_appimage(tmp_path / "Strom.AppImage", tag="old")
     identity = _identity(target)
@@ -417,6 +436,18 @@ def test_recover_prunes_old_backups_bounded(tmp_path):
         p.name for p in tmp_path.iterdir() if ".backup-" in p.name
     )
     assert len(remaining) == 2
+
+
+def test_recover_prunes_abandoned_staging_files(tmp_path):
+    target = _fake_appimage(tmp_path / "Strom.AppImage", tag="old")
+    identity = _identity(target)
+    orphan = tmp_path / ".Strom.AppImage.staging-orphan"
+    orphan.write_bytes(b"leftover download")
+    unrelated = tmp_path / "important.txt"
+    unrelated.write_text("keep")
+    assert update_install.recover(identity) is None
+    assert not orphan.exists()
+    assert unrelated.read_text() == "keep"
 
 
 def test_recover_refuses_journal_describing_another_file(tmp_path):

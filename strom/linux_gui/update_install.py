@@ -84,17 +84,6 @@ class FileLock:
         self._fd = fd
         return True
 
-    def convert(self, *, exclusive: bool) -> bool:
-        """Re-lock the held descriptor; False when another holder blocks it."""
-        if self._fd is None:
-            raise TransactionError("cannot convert a lock that is not held")
-        mode = (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB
-        try:
-            fcntl.flock(self._fd, mode)
-        except OSError:
-            return False
-        return True
-
     def release(self) -> None:
         if self._fd is None:
             return
@@ -115,10 +104,6 @@ def journal_path(target: Path) -> Path:
 
 def update_lock_path(target: Path) -> Path:
     return target.with_name(prefixed(target, "update-lock"))
-
-
-def instance_lock_path(target: Path) -> Path:
-    return target.with_name(prefixed(target, "instance-lock"))
 
 
 def is_owned_path(path: Path, target: Path, mark: str) -> bool:
@@ -268,22 +253,31 @@ def prepare_transaction(
         # real copy when the filesystem refuses links.
         shutil.copyfile(target.path, backup)
         os.chmod(backup, stat.S_IMODE(os.stat(target.path).st_mode))
-    write_journal(
-        target.path,
-        {
-            JOURNAL_MARKER: JOURNAL_VERSION,
-            "state": "staged",
-            "target": _target_record(target),
-            "backup": {"path": str(backup)},
-            "staging": {
-                "path": str(staging),
-                "size": staging_size,
-                "sha256": staging_sha256,
+    try:
+        write_journal(
+            target.path,
+            {
+                JOURNAL_MARKER: JOURNAL_VERSION,
+                "state": "staged",
+                "target": _target_record(target),
+                "backup": {"path": str(backup)},
+                "staging": {
+                    "path": str(staging),
+                    "size": staging_size,
+                    "sha256": staging_sha256,
+                },
+                "release": {"version": str(release.version), "tag": release.tag},
+                "pid": os.getpid(),
             },
-            "release": {"version": str(release.version), "tag": release.tag},
-            "pid": os.getpid(),
-        },
-    )
+        )
+    except TransactionError:
+        # The journal never recorded the backup, so recovery cannot know
+        # about it; remove it here instead of leaking an orphan.
+        try:
+            backup.unlink()
+        except OSError:
+            pass
+        raise
     return Transaction(target=target, release=release, staging=staging, backup=backup)
 
 
@@ -399,6 +393,29 @@ def prune_backups(target: AppImageIdentity, *, keep: int = KEEP_BACKUPS) -> None
             pass
 
 
+def prune_staging(target: AppImageIdentity) -> None:
+    """Delete updater-owned staging files left by an abandoned download.
+
+    A staging file is only useful while a transaction records it; recovery
+    runs before any new download, so anything else beside the target was
+    abandoned when the app closed.
+    """
+    prefix = prefixed(target.path, STAGING_MARK)
+    try:
+        candidates = [
+            entry
+            for entry in target.path.parent.iterdir()
+            if entry.is_file() and entry.name.startswith(prefix)
+        ]
+    except OSError:
+        return
+    for stale in candidates:
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+
 def recover(target: AppImageIdentity, *, keep: int = KEEP_BACKUPS) -> str | None:
     """Startup recovery for an interrupted transaction (update plan §5).
 
@@ -409,6 +426,9 @@ def recover(target: AppImageIdentity, *, keep: int = KEEP_BACKUPS) -> str | None
     """
     payload = load_journal(target.path)  # raises on corrupt/unowned records
     if payload is None:
+        # No transaction is in flight, so any staging file is abandoned
+        # (the app closed before installing the verified download).
+        prune_staging(target)
         return None
     if str(payload["state"]) == "staged":
         # The replacement never happened: the original is intact at the
@@ -421,12 +441,14 @@ def recover(target: AppImageIdentity, *, keep: int = KEEP_BACKUPS) -> str | None
             Path(str(staging_section["path"])),
             Path(str(backup_section["path"])),
         )
+        prune_staging(target)
         return None
     # "replaced"/"acknowledged": the new version is in place and running.
     # Delete the journal, keep one recoverable backup and prune older ones
     # so backup cleanup stays bounded.
     clear_journal(target)
     prune_backups(target, keep=keep)
+    prune_staging(target)
     backup_section = payload.get("backup")
     assert isinstance(backup_section, dict)
     return str(backup_section["path"])

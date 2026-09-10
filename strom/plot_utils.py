@@ -218,8 +218,6 @@ def plot_combined_cases_years(
     ax_cost2.tick_params(axis='y', labelcolor=color)
     ax_cost2.tick_params(axis='x', rotation=45)
     legends_cost.append((ax_cost2.get_legend_handles_labels()[1], ax_cost2, color))
-    # print the difference in total costs
-    print(sum(state_base_df['Cost']-state_opt_df['Cost'])/sum(state_base_df['Cost']))
 
     # Daily cost
     ax_day = ax_cost.twinx()

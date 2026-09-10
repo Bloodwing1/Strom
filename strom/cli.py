@@ -14,11 +14,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
+from pathlib import Path
 
 from strom.config import AppConfig, load_app_config
-from strom.controller import ControllerDeps, run_control_cycle
+from strom.controller import ControlReport, ControllerDeps, run_control_cycle
 from strom.control import SystemClock
 from strom.errors import ConfigurationError, StromError
 
@@ -31,7 +33,12 @@ def build_controller_deps(config: AppConfig,
     from strom.data_utils import get_temp_price_df
 
     def fetch_data():
-        return get_temp_price_df(horizon_hours=horizon_hours, city=city)
+        return get_temp_price_df(
+            horizon_hours=horizon_hours,
+            city=city,
+            weather_api_key=config.weather_api_key,
+            price_api_key=config.price_api_key,
+        )
 
     return ControllerDeps(
         fetch_data=fetch_data,
@@ -41,14 +48,27 @@ def build_controller_deps(config: AppConfig,
     )
 
 
-async def run_cycle(config: AppConfig, deps: ControllerDeps) -> None:
-    await run_control_cycle(
+async def run_cycle(config: AppConfig, deps: ControllerDeps) -> ControlReport:
+    return await run_control_cycle(
         deps,
         config.credentials.email,
         config.credentials.password,
         config.credentials.device_ip,
         config.house,
     )
+
+
+def write_report(path: str, report: ControlReport) -> None:
+    """Write the machine-readable run summary; never fail the run for it."""
+    payload = {
+        "on_seconds": report.on_seconds,
+        "interval_seconds": report.interval_seconds,
+        "estimated_cost_eur": report.estimated_cost_eur,
+    }
+    try:
+        Path(path).write_text(json.dumps(payload), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not write the run report to %s: %s", path, exc)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -64,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--horizon-hours", type=int, default=24,
-        help="How many whole-hour intervals ahead to optimize (default 24).",
+        help="How many whole-hour intervals ahead to optimize (default 24, minimum 2).",
     )
     parser.add_argument(
         "--log-level", default="INFO",
@@ -73,6 +93,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--city", default="Barcelona, ES",
                         help="Weather location, including country code (default: Barcelona, ES).")
+    parser.add_argument(
+        "--report-file", default=None,
+        help="Write a JSON run summary (on-time and estimated cost) to this path.",
+    )
     return parser
 
 
@@ -84,13 +108,16 @@ def run(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     try:
-        if args.horizon_hours < 1:
+        if args.horizon_hours < 2:
             raise ConfigurationError(
-                f"--horizon-hours must be >= 1, got {args.horizon_hours}."
+                f"--horizon-hours must be >= 2, got {args.horizon_hours}: the "
+                "optimizer needs at least two intervals."
             )
         config = load_app_config(args.config_dir)
         deps = build_controller_deps(config, args.horizon_hours, args.city)
-        asyncio.run(run_cycle(config, deps))
+        report = asyncio.run(run_cycle(config, deps))
+        if args.report_file and report is not None:
+            write_report(args.report_file, report)
     except StromError as exc:
         logger.error("Strom finished with an operational failure: %s", exc)
         return 1

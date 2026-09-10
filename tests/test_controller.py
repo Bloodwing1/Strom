@@ -45,6 +45,13 @@ class TestHappyPath:
         assert plug.calls[:3] == ["turn_on", "turn_off", "update"]
         assert plug.calls.count("async_close") == 1
 
+    async def test_cycle_returns_a_report(self, plug, clock):
+        deps = make_deps(plug, clock)
+        report = await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
+        assert report.on_seconds == pytest.approx(1800.0)
+        assert report.interval_seconds == pytest.approx(3600.0)
+        assert report.estimated_cost_eur == pytest.approx(0.0)
+
     async def test_zero_duty_never_turns_on(self, plug, clock):
         deps = make_deps(plug, clock, fetch=lambda: make_schedule([0.0]))
         await run_control_cycle(deps, "e", "p", "1.2.3.4", house=None)
@@ -165,6 +172,34 @@ class TestExitCodes:
         with caplog.at_level("ERROR"):
             assert cli.run(["--config-dir", str(config)]) == 1
         assert "rate limited" in caplog.text
+
+    def test_report_file_written_after_a_successful_run(self, tmp_path, monkeypatch):
+        import json
+
+        from strom import cli
+        from strom.controller import ControlReport
+        from .conftest import make_config_dir
+
+        config = make_config_dir(tmp_path)
+
+        async def ok_cycle(cfg, deps):
+            return ControlReport(
+                on_seconds=1920.0,
+                interval_seconds=3600.0,
+                estimated_cost_eur=0.123,
+            )
+
+        monkeypatch.setattr(cli, "run_cycle", ok_cycle)
+        report_path = tmp_path / "report.json"
+        code = cli.run([
+            "--config-dir", str(config), "--report-file", str(report_path),
+        ])
+        assert code == 0
+        assert json.loads(report_path.read_text()) == {
+            "on_seconds": 1920.0,
+            "interval_seconds": 3600.0,
+            "estimated_cost_eur": 0.123,
+        }
 
     def test_unexpected_error_propagates(self, tmp_path, monkeypatch):
         from strom import cli

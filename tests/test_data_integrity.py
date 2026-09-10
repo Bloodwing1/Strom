@@ -17,7 +17,6 @@ from strom.data_utils import (
     align_prices,
     align_weather,
     get_temp_price_df,
-    get_temp_price_from_temp,
     join_data,
 )
 from strom.errors import CoverageError
@@ -40,17 +39,6 @@ def price_series(index, price=0.10):
 
 
 class TestUtcCanonical:
-    def test_epoch_parsing_is_utc(self):
-        # 1735689600 == 2025-01-01 00:00 UTC (01:00 Madrid).
-        df = pd.DataFrame({
-            "datetimeEpoch": [1735689600, 1735693200],
-            "temp": [10.0, 11.0],
-        })
-        result = get_temp_price_from_temp(df, prices=price_series(
-            utc_range("2025-01-01", 2)))
-        assert str(result.index.tz) == "UTC"
-        assert result.index[0] == pd.Timestamp("2025-01-01 00:00", tz="UTC")
-
     def test_naive_input_rejected(self):
         naive = pd.Series([1.0], index=pd.DatetimeIndex(["2025-01-01"]))
         with pytest.raises(ValueError, match="timezone-aware"):
@@ -173,6 +161,25 @@ class TestWeatherIntegrity:
         assert not aligned.isna().any()
         assert aligned.iloc[1] == pytest.approx(11.0)
 
+    def test_fill_respects_documented_max_gap(self):
+        # Observations 4h apart leave 3 missing hourly points; the farthest
+        # fill (the midpoint) is 2h from a real observation, inside max_gap.
+        obs = pd.DatetimeIndex(
+            ["2025-01-01 00:00", "2025-01-01 04:00"], tz="UTC")
+        temp = pd.Series([8.0, 12.0], index=obs, name=TEMPERATURE_COLUMN)
+        aligned = align_weather(temp, utc_range("2025-01-01", 5), max_gap=3 * H)
+        assert not aligned.isna().any()
+        assert aligned.iloc[2] == pytest.approx(10.0)
+
+    def test_gap_beyond_documented_max_gap_raises(self):
+        # Observations 8h apart leave 7 missing hourly points; the farthest
+        # fill is 4h from a real observation, beyond max_gap=3h.
+        obs = pd.DatetimeIndex(
+            ["2025-01-01 00:00", "2025-01-01 08:00"], tz="UTC")
+        temp = pd.Series([8.0, 12.0], index=obs, name=TEMPERATURE_COLUMN)
+        with pytest.raises(CoverageError, match="no observation within"):
+            align_weather(temp, utc_range("2025-01-01", 9), max_gap=3 * H)
+
 
 class TestJoinAndHorizon:
     def test_join_data_normalizes_independently(self):
@@ -213,3 +220,16 @@ class TestJoinAndHorizon:
         prices = price_series(utc_range("2025-01-01 12:00", 4))
         with pytest.raises(CoverageError):
             get_temp_price_df(weather=weather, prices=prices, now=now)
+
+    def test_single_interval_horizon_aligns_without_crashing(self):
+        now = pd.Timestamp("2025-01-01 13:20", tz="UTC")
+        weather = weather_series(utc_range("2025-01-01 12:00", 3))
+        prices = price_series(utc_range("2025-01-01 12:00", 3))
+        df = get_temp_price_df(weather=weather, prices=prices, now=now,
+                               horizon_hours=1)
+        assert len(df) == 1
+        assert df.index[0] == pd.Timestamp("2025-01-01 14:00", tz="UTC")
+
+    def test_non_positive_horizon_rejected(self):
+        with pytest.raises(ValueError, match="horizon_hours"):
+            get_temp_price_df(horizon_hours=0)

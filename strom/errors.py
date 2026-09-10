@@ -19,15 +19,7 @@ class ConfigurationError(StromError):
 
 
 class ProviderError(StromError):
-    """An external data provider (weather / electricity price) failed.
-
-    ``retryable`` marks failures where a bounded retry may help
-    (timeouts, connection errors, 5xx, rate limits).
-    """
-
-    def __init__(self, message: str, retryable: bool = False) -> None:
-        super().__init__(message)
-        self.retryable = retryable
+    """An external data provider (weather / electricity price) failed."""
 
 
 class WeatherProviderError(ProviderError):

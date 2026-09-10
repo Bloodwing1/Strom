@@ -148,6 +148,26 @@ class TestAppConfig:
         app = load_app_config(str(config))
         assert app.credentials.device_ip == "192.168.1.42"
 
+    def test_controller_deps_pass_the_loaded_api_keys(self, tmp_path, monkeypatch):
+        from strom.cli import build_controller_deps
+
+        app = load_app_config(str(make_config_dir(tmp_path)))
+        import strom.data_utils as data_utils
+
+        captured: dict = {}
+
+        def fake_get_temp_price_df(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(data_utils, "get_temp_price_df", fake_get_temp_price_df)
+        build_controller_deps(app, 24, "Madrid, ES").fetch_data()
+        assert captured == {
+            "horizon_hours": 24,
+            "city": "Madrid, ES",
+            "weather_api_key": "weather-key",
+            "price_api_key": "price-key",
+        }
+
 
 class TestImportSideEffectFree:
     def test_importing_modules_performs_no_io(self, tmp_path, monkeypatch):

@@ -18,6 +18,7 @@ Lifecycle rules (audit issue 32):
 from __future__ import annotations
 
 import logging
+import math
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
@@ -37,6 +38,15 @@ from .errors import DeviceError, StromError
 from .optimization_utils import House, find_heating_output
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ControlReport:
+    """Outcome of one control cycle, for user-facing run summaries."""
+
+    on_seconds: float
+    interval_seconds: float
+    estimated_cost_eur: float | None
 
 
 async def _default_discover(device_ip, email, password):
@@ -74,19 +84,16 @@ class ControllerDeps:
 @asynccontextmanager
 async def managed_plug(dev):
     """Close the device connection exactly once, on every exit path."""
-    closed = False
     try:
         yield dev
     finally:
-        if not closed:
-            closed = True
-            try:
-                await dev.async_close()
-            except Exception:
-                logger.warning(
-                    "Failed to close the device connection cleanly.",
-                    exc_info=True,
-                )
+        try:
+            await dev.async_close()
+        except Exception:
+            logger.warning(
+                "Failed to close the device connection cleanly.",
+                exc_info=True,
+            )
 
 
 async def _device_command(dev, operation: str) -> None:
@@ -105,7 +112,7 @@ async def run_control_cycle(
     password: str,
     device_ip: str,
     house: House,
-) -> None:
+) -> ControlReport:
     """Run one full control cycle with strict cleanup semantics."""
     if not device_ip:
         raise DeviceError("No device IP configured; cannot discover the plug.")
@@ -138,6 +145,7 @@ async def run_control_cycle(
             plan.interval_seconds - plan.total_on_seconds,
             plan.interval_seconds,
         )
+        estimated_cost = _first_interval_cost(schedule)
         # --- actuation ----------------------------------------------------
         watchdog = _make_watchdog(deps, dev)
         watchdog.start()
@@ -153,6 +161,22 @@ async def run_control_cycle(
             "Device state after cycle: %s",
             "ON" if getattr(dev, "is_on", False) else "OFF",
         )
+        return ControlReport(
+            on_seconds=plan.total_on_seconds,
+            interval_seconds=plan.interval_seconds,
+            estimated_cost_eur=estimated_cost,
+        )
+
+
+def _first_interval_cost(schedule: pd.DataFrame) -> float | None:
+    """Estimated electricity cost of the actuated interval, when available."""
+    if "Cost" not in getattr(schedule, "columns", ()):
+        return None
+    try:
+        cost = float(schedule["Cost"].iloc[0])
+    except (IndexError, TypeError, ValueError):
+        return None
+    return cost if math.isfinite(cost) else None
 
 
 def _make_watchdog(deps: ControllerDeps, dev) -> MaxOnWatchdog:

@@ -450,6 +450,25 @@ def test_download_streams_hashes_and_verifies(qtbot, fake_service, tmp_path):
     assert stat.S_IMODE(prepared[0].staging.stat().st_mode) & 0o777 == 0o755
 
 
+def test_download_emits_terminal_progress(qtbot, fake_service, tmp_path):
+    payload = b"P" * 5000
+    digest = hashlib.sha256(payload).hexdigest()
+    fake_service.routes = {
+        f"/fixtures/download/v0.4.0/{ASSET_NAME}": (200, payload),
+        "/fixtures/download/v0.4.0/SHA256SUMS": (
+            200,
+            f"{digest}  {ASSET_NAME}\n".encode(),
+        ),
+    }
+    service = _local_service(fake_service.base)
+    progress: list[tuple[int, int]] = []
+    service.downloadProgress.connect(lambda r, t: progress.append((r, t)))
+    with qtbot.waitSignal(service.downloadPrepared, timeout=10_000):
+        service.download(_release(fake_service.base, payload), tmp_path / "Strom.AppImage")
+    assert progress
+    assert progress[-1] == (len(payload), len(payload))
+
+
 def test_download_fails_on_checksum_mismatch(qtbot, fake_service, tmp_path):
     payload = b"B" * 1000
     wrong = hashlib.sha256(b"not the payload").hexdigest()
@@ -586,7 +605,7 @@ def test_cancel_stops_the_download_and_removes_staging(
     with qtbot.waitSignal(service.cancelled, timeout=10_000):
         service.cancel()
     assert len(cancelled) == 1
-    assert service.state.value == "Idle"
+    assert service._state is UpdateState.Idle
     assert service.is_busy() is False
 
 
@@ -630,6 +649,39 @@ if "--strom-self-test" in sys.argv:
     sys.exit(0)
 sys.stderr.write("boom\\n")
 sys.exit(5)
+"""
+
+SPLIT_ACK_CANDIDATE = """#!/usr/bin/env python3
+import json
+import os
+import socket
+import sys
+import time
+
+if "--strom-self-test" in sys.argv:
+    print("selftest ok")
+    sys.exit(0)
+
+name, _, token = os.environ["STROM_UPDATE_ACK"].partition(":")
+client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+for _ in range(200):
+    try:
+        client.connect(name)
+        break
+    except OSError:
+        time.sleep(0.05)
+else:
+    sys.exit(3)
+payload = json.dumps({
+    "token": token,
+    "pid": os.getpid(),
+    "heating_disabled": True,
+}).encode()
+client.sendall(payload[:7])
+time.sleep(0.2)
+client.sendall(payload[7:])
+time.sleep(0.4)
+sys.exit(0)
 """
 
 FAILING_SELFTEST = """#!/usr/bin/env python3
@@ -707,6 +759,29 @@ def test_install_transaction_replaces_and_restarts(
     assert journal["state"] == "acknowledged"
     backups = [p for p in tmp_path.iterdir() if ".backup-" in p.name]
     assert len(backups) == 1 and backups[0].read_bytes().startswith(b"#!/usr/bin/env python3\nprint('old')")
+
+
+def test_ack_handshake_accepts_a_split_payload(qtbot, fake_service, tmp_path):
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"#!/usr/bin/env python3\nprint('old')\n")
+    os.chmod(target, 0o755)
+    staging = tmp_path / ".Strom.AppImage.staging-abc"
+    staging.write_bytes(SPLIT_ACK_CANDIDATE.encode())
+    os.chmod(staging, 0o755)
+    release = _release(fake_service.base, b"x")
+    coordinator, blocks, saved, closed = _coordinator(
+        qtbot, tmp_path, target, SPLIT_ACK_CANDIDATE
+    )
+    coordinator._prepared = PreparedUpdate(
+        release=release, staging=staging, size=staging.stat().st_size,
+        sha256=update_install.file_sha256(staging),
+    )
+    with qtbot.waitSignal(coordinator.installFinished, timeout=30_000) as finished:
+        assert coordinator.accept_install(release) is True
+    assert finished.args[0] is True
+    assert coordinator.state is UpdateState.Restarting
+    assert blocks == [True]
+    assert saved == [1] and closed == [1]
 
 
 def test_selftest_failure_rolls_back_and_reopens_controls(
@@ -801,6 +876,57 @@ def test_repeated_update_clicks_start_one_transaction(
     with qtbot.waitSignal(coordinator.installFinished, timeout=30_000):
         pass
     assert update_install.journal_path(target).exists() is False
+
+
+def test_check_refused_while_installation_runs(
+    qtbot, fake_service, tmp_path
+):
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o644)
+    staging = tmp_path / ".Strom.AppImage.staging-abc"
+    staging.write_bytes(FAILING_SELFTEST.encode())
+    os.chmod(staging, 0o755)
+    release = _release(fake_service.base, b"x")
+    coordinator, blocks, _saved, _closed = _coordinator(qtbot, tmp_path, target, FAILING_SELFTEST)
+    coordinator._prepared = PreparedUpdate(
+        release=release, staging=staging, size=staging.stat().st_size,
+        sha256=update_install.file_sha256(staging),
+    )
+    assert coordinator.accept_install(release) is True
+    assert coordinator.state is UpdateState.Installing
+    # A check during the installation must not overwrite the install state.
+    assert coordinator.check(manual=True) is False
+    assert coordinator.state is UpdateState.Installing
+    with qtbot.waitSignal(coordinator.installFinished, timeout=30_000):
+        pass
+    assert blocks == [True, False]
+
+
+def test_translated_message_formats_after_translation(qtbot, fake_service, tmp_path):
+    target = _fake_appimage(tmp_path)
+    coordinator, _blocks, _saved, _closed = _coordinator(
+        qtbot, tmp_path, target, FAKE_CANDIDATE
+    )
+    release = _release(fake_service.base, b"x")
+    note = (
+        "The release list was too long to check completely; newer releases "
+        "may exist."
+    )
+    coordinator._on_check_completed(
+        updates.Selection(
+            kind=updates.SelectionKind.AVAILABLE, candidate=release, note=note
+        )
+    )
+    translated = {
+        "Strom {available} is available; you are running {current}.":
+            "Strom {available} disponible; usas {current}.",
+        note: "La lista de versiones es demasiado larga.",
+    }
+    assert coordinator.translated_message(translated.get) == (
+        "Strom 0.4.0 disponible; usas 0.3.0.\n"
+        "La lista de versiones es demasiado larga."
+    )
 
 
 def test_install_refused_when_another_window_holds_the_lock(

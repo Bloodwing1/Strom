@@ -118,7 +118,7 @@ def test_cli_dispatch_forwards_arguments_verbatim(tmp_path):
     assert dispatch_error.returncode == 1, (
         dispatch_error.stdout + dispatch_error.stderr
     )
-    assert "--horizon-hours must be >= 1" in dispatch_error.stderr
+    assert "--horizon-hours must be >= 2" in dispatch_error.stderr
 
     # A valid horizon proves the accented path argument itself reaches the
     # CLI resolver verbatim (the directory does not exist on purpose).

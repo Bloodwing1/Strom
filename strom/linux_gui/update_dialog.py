@@ -17,7 +17,7 @@ from PySide6 import QtGui, QtWidgets
 from PySide6.QtCore import Qt, QUrl
 
 from strom.linux_gui.update_service import UpdateCoordinator, UpdateState
-from strom.linux_gui.updates import RELEASES_PAGE_URL, Selection
+from strom.linux_gui.updates import RELEASES_PAGE_URL
 
 _PROGRESS_TEMPLATE = "{received} of {total} bytes downloaded"
 _CYCLE_BUSY_TEXT = (
@@ -44,6 +44,13 @@ class UpdateDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setSpacing(12)
+
+        self._heading = QtWidgets.QLabel("Check for updates", self)
+        heading_font = self._heading.font()
+        heading_font.setPointSize(heading_font.pointSize() + 3)
+        heading_font.setBold(True)
+        self._heading.setFont(heading_font)
+        layout.addWidget(self._heading)
 
         form = QtWidgets.QFormLayout()
         form.setSpacing(8)
@@ -120,6 +127,7 @@ class UpdateDialog(QtWidgets.QDialog):
         )
         state = coordinator.state
         downloading = state in (UpdateState.Downloading, UpdateState.Verifying)
+        installing = state in (UpdateState.Installing, UpdateState.Restarting)
         self._progress.setVisible(downloading)
         self._progress_label.setVisible(downloading)
         if downloading:
@@ -131,6 +139,7 @@ class UpdateDialog(QtWidgets.QDialog):
                 translate(_PROGRESS_TEMPLATE).format(received=received, total=total)
             )
         cycle_running = coordinator.is_cycle_active()
+        self._check_button.setEnabled(not downloading and not installing)
         self._install_button.setVisible(status.can_install)
         self._install_button.setEnabled(
             status.can_install
@@ -139,8 +148,13 @@ class UpdateDialog(QtWidgets.QDialog):
             and not coordinator.run_blocked()
             and not cycle_running
         )
+        self._install_button.setDefault(
+            status.can_install and candidate is not None
+            and not downloading and not installing
+        )
         self._page_button.setVisible(not status.can_install)
-        message = coordinator.message
+        self._page_button.setDefault(not status.can_install)
+        message = coordinator.translated_message(translate)
         if cycle_running and status.can_install and not downloading:
             self._status_label.setText(
                 translate(_CYCLE_BUSY_TEXT)
@@ -148,12 +162,13 @@ class UpdateDialog(QtWidgets.QDialog):
                 else message
             )
         else:
-            self._status_label.setText(translate(message) if message else "")
+            self._status_label.setText(message)
 
     def retranslate(self) -> None:
         """Re-translate every static text after a language change."""
         translate = self._translate
         self.setWindowTitle(translate("Check for updates"))
+        self._heading.setText(translate("Strom updates"))
         self._check_button.setText(translate("Check for updates"))
         self._install_button.setText(translate("Update and restart"))
         self._page_button.setText(translate("Open release page"))
@@ -176,9 +191,8 @@ class UpdateDialog(QtWidgets.QDialog):
     def _on_open_release_page(self) -> None:
         QtGui.QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
 
-    def present(self, selection: Selection | None = None) -> None:
+    def present(self) -> None:
         """Show and raise the dialog when the user asked for it."""
-        del selection
         self.refresh()
         self.show()
         self.raise_()

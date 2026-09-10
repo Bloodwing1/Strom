@@ -55,6 +55,7 @@ def _to_utc(series: pd.Series, name: str) -> pd.Series:
 
 
 def _infer_step(index: pd.DatetimeIndex) -> pd.Timedelta:
+    """Median step of a regular target index; zero for a single point."""
     diffs = index.to_series().diff().dropna()
     if diffs.empty:
         return pd.Timedelta(0)
@@ -77,7 +78,11 @@ def align_weather(weather: pd.Series,
     """
     source = _to_utc(weather, "weather")
     step = _infer_step(target_index)
-    limit = max(1, int(max_gap / step) - 1)
+    # A gap of n missing points leaves the farthest interpolated point
+    # floor((n + 1) / 2) steps from a real observation, so n may be at
+    # most 2 * floor(max_gap / step). A single-point target has no step to
+    # divide by; at most one plain fill is meaningful there.
+    limit = max(1, 2 * int(max_gap / step)) if step > pd.Timedelta(0) else 1
     out = source.reindex(target_index)
     out = out.interpolate(method="time", limit=limit, limit_area="inside")
     missing = out.index[out.isna()]
@@ -103,7 +108,7 @@ def align_prices(prices: pd.Series,
     """
     source = _to_utc(prices, "price")
     step = _infer_step(target_index)
-    limit = max(1, int(max_fill / step))
+    limit = max(1, int(max_fill / step)) if step > pd.Timedelta(0) else 1
     out = source.reindex(target_index)
     out = out.ffill(limit=limit)
     missing = out.index[out.isna()]
@@ -152,6 +157,8 @@ def get_temp_price_df(
     zone: str = "ES",
     city: str = "Barcelona, ES",
     now: pd.Timestamp | None = None,
+    weather_api_key: str | None = None,
+    price_api_key: str | None = None,
     weather_max_gap: pd.Timedelta = pd.Timedelta(hours=3),
     price_max_fill: pd.Timedelta = pd.Timedelta(hours=1),
 ) -> pd.DataFrame:
@@ -159,17 +166,24 @@ def get_temp_price_df(
 
     The horizon is the next ``horizon_hours`` whole-hour UTC intervals after
     the current hour. Both sources are validated for coverage; incomplete
-    horizons raise instead of being filled from distant observations.
+    horizons raise instead of being filled from distant observations. API
+    keys are passed through to the providers when the series are fetched;
+    injected series never need them.
     """
+    if horizon_hours < 1:
+        raise ValueError(
+            f"horizon_hours must be >= 1, got {horizon_hours!r}."
+        )
     now = now or pd.Timestamp.now(tz=CANONICAL_TZ)
     start = now.floor("h") + pd.Timedelta(hours=1)
     target = pd.date_range(start, periods=horizon_hours, freq="1h",
                            tz=CANONICAL_TZ)
 
     if weather is None:
-        weather = get_weather_data(city=city)
+        weather = get_weather_data(city=city, api_key=weather_api_key)
     if prices is None:
-        prices = get_price_series(zone=zone, end=target[-1])
+        prices = get_price_series(zone=zone, end=target[-1],
+                                  api_key=price_api_key)
 
     aligned_temp = align_weather(weather, target, weather_max_gap)
     aligned_price = align_prices(prices, target, price_max_fill)
@@ -177,24 +191,3 @@ def get_temp_price_df(
     df.columns = [TEMPERATURE_COLUMN, PRICE_COLUMN]
     df.index.name = "Timestamp"
     return df
-
-
-def get_temp_price_from_temp(temp_df: pd.DataFrame,
-                             prices: pd.Series | None = None) -> pd.DataFrame:
-    """Build the optimization frame from VisualCrossing-style epoch data.
-
-    Epochs are parsed as UTC (they are UTC by definition). The input frame
-    is never mutated. Prices are fetched unless injected via ``prices``.
-    """
-    df = temp_df.copy()
-    df = df.rename(columns={"temp": TEMPERATURE_COLUMN})
-    df["Timestamp"] = pd.to_datetime(df["datetimeEpoch"], unit="s",
-                                     utc=True)
-    df = df.set_index("Timestamp")
-    hourly = df.groupby(df.index).mean().resample("1h").asfreq()
-    hourly[TEMPERATURE_COLUMN] = hourly[TEMPERATURE_COLUMN].interpolate(
-        method="time", limit_area="inside")
-    temp_series = hourly[TEMPERATURE_COLUMN]
-    if prices is None:
-        prices = get_price_series()
-    return join_data(temp_series, prices)

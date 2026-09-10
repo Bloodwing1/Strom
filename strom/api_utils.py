@@ -33,11 +33,6 @@ from entsoe.exceptions import NoMatchingDataError
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
-EXAMPLE_CITIES = [
-    "Barcelona, ES", "Madrid, ES", "Berlin, DE",
-    "Paris, FR", "London, GB", "Rome, IT"
-]
-
 WEATHER_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
 #: (connect, read) timeouts in seconds for every HTTP request.
@@ -94,30 +89,19 @@ def _retry_loop(
 def find_config_file(name: str) -> Path:
     """Locate a file in the Strom config directory without side effects.
 
-    Looks in ``$STROM_CONFIG_DIR`` first, then in a ``config/`` folder next
-    to any parent of the current working directory. Never calls ``os.chdir``.
+    Uses the single config-directory resolution in :mod:`strom.config`
+    (``$STROM_CONFIG_DIR`` first, then a ``config/`` folder next to any
+    parent of the current working directory). Never calls ``os.chdir``.
     """
     env_dir = os.getenv("STROM_CONFIG_DIR")
     if env_dir:
-        candidate = Path(env_dir) / name
-        if candidate.exists():
-            return candidate
-        return candidate
-    current = Path.cwd()
-    for directory in (current, *current.parents):
-        candidate = directory / "config" / name
-        if candidate.exists():
-            return candidate
-    return current / "config" / name
-
-
-def read_api_key(key_path: str) -> str:
-    return Path(key_path).read_text().strip()
-
-
-def get_api_key(key_path: str) -> str:
-    """Alias for read_api_key for backward compatibility"""
-    return read_api_key(key_path)
+        return Path(env_dir) / name
+    from .config import DEFAULT_CONFIG_DIRNAME, resolve_config_dir
+    from .errors import ConfigurationError
+    try:
+        return resolve_config_dir() / name
+    except ConfigurationError:
+        return Path.cwd() / DEFAULT_CONFIG_DIRNAME / name
 
 
 def get_weather_api_key(config_dir: Path | None = None) -> str:
@@ -204,7 +188,7 @@ def get_weather_data(city: str = "Barcelona, ES",
         if transient:
             return WeatherProviderError(
                 f"Weather provider unavailable for {city!r} after "
-                f"{max_attempts} attempts: {detail}", retryable=True)
+                f"{max_attempts} attempts: {detail}")
         return WeatherProviderError(
             f"Weather request for {city!r} failed: {detail}")
 
@@ -285,7 +269,7 @@ def get_spain_electricity_prices(
         if transient:
             return PriceProviderError(
                 f"ENTSO-E unavailable for zone {zone!r} after "
-                f"{max_attempts} attempts: {detail}", retryable=True)
+                f"{max_attempts} attempts: {detail}")
         return PriceProviderError(
             f"ENTSO-E request for zone {zone!r} failed: {detail}")
 
