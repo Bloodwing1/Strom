@@ -322,8 +322,8 @@ class UpdateService(QObject):
         self._request_page(1)
         return True
 
-    def download(self, release: ReleaseInfo, destination: Path) -> bool:
-        """Stream one release's AppImage into a staging file beside it."""
+    def download(self, release: ReleaseInfo, target: Path) -> bool:
+        """Stream a release into an owned staging file beside the target AppImage."""
         if self._reply is not None:
             return False
         if release.appimage is None or release.checksums is None:
@@ -346,9 +346,9 @@ class UpdateService(QObject):
         try:
             fd, raw = tempfile.mkstemp(
                 prefix=update_install.prefixed(
-                    destination, update_install.STAGING_MARK
+                    target, update_install.STAGING_MARK
                 ),
-                dir=destination,
+                dir=target.parent,
             )
         except OSError as exc:
             self._set_state(UpdateState.Idle)
@@ -390,7 +390,10 @@ class UpdateService(QObject):
         )
         self._start(url)
 
-    def _start(self, url: str) -> None:
+    def _start(self, url: str, *, redirect: bool = False) -> None:
+        if not redirect:
+            self._metadata.clear()
+            self._redirects_left = self._config.max_redirects
         request = QNetworkRequest(QUrl(url))
         request.setTransferTimeout(self._config.request_timeout_ms)
         request.setAttribute(
@@ -399,7 +402,6 @@ class UpdateService(QObject):
         )
         request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, "strom-update")
         reply = self._manager.get(request)
-        self._redirects_left = self._config.max_redirects
         self._reply = reply
         token = self._token
         reply.finished.connect(lambda: self._on_finished(token, reply))
@@ -473,7 +475,7 @@ class UpdateService(QObject):
             self._fail("the release server redirected outside the supported hosts")
             return
         self._redirects_left -= 1
-        self._start(resolved)
+        self._start(resolved, redirect=True)
 
     @staticmethod
     def _describe_error(reply: QNetworkReply, status: object) -> str:
@@ -865,7 +867,7 @@ class UpdateCoordinator(QObject):
             return True
         self._set_state(UpdateState.Downloading)
         self._set_message("Downloading the update…")
-        if not self._service.download(release, self._target.path.parent):
+        if not self._service.download(release, self._target.path):
             # downloadFailed already ran the failure path synchronously.
             return False
         return True

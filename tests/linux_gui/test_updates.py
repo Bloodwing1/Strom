@@ -441,7 +441,7 @@ def test_download_streams_hashes_and_verifies(qtbot, fake_service, tmp_path):
     prepared: list = []
     service.downloadPrepared.connect(prepared.append)
     with qtbot.waitSignal(service.downloadPrepared, timeout=10_000):
-        service.download(_release(fake_service.base, payload), tmp_path)
+        service.download(_release(fake_service.base, payload), tmp_path / "Strom.AppImage")
     assert len(prepared) == 1
     assert prepared[0].sha256 == digest
     assert prepared[0].staging.read_bytes() == payload
@@ -462,7 +462,7 @@ def test_download_fails_on_checksum_mismatch(qtbot, fake_service, tmp_path):
     failures: list[str] = []
     service.downloadFailed.connect(failures.append)
     with qtbot.waitSignal(service.downloadFailed, timeout=10_000):
-        service.download(_release(fake_service.base, payload), tmp_path)
+        service.download(_release(fake_service.base, payload), tmp_path / "Strom.AppImage")
     assert "does not match its checksum" in failures[0]
     assert not list(tmp_path.iterdir())  # staging was removed
 
@@ -475,7 +475,7 @@ def test_download_fails_on_truncated_response(qtbot, fake_service, tmp_path):
     failures: list[str] = []
     service.downloadFailed.connect(failures.append)
     with qtbot.waitSignal(service.downloadFailed, timeout=10_000):
-        service.download(_release(fake_service.base, b"C" * 1000), tmp_path)
+        service.download(_release(fake_service.base, b"C" * 1000), tmp_path / "Strom.AppImage")
     assert "incomplete" in failures[0]
 
 
@@ -500,7 +500,7 @@ def test_download_rejects_response_larger_than_recorded_size(
     failures: list[str] = []
     service.downloadFailed.connect(failures.append)
     with qtbot.waitSignal(service.downloadFailed, timeout=10_000):
-        service.download(oversized, tmp_path)
+        service.download(oversized, tmp_path / "Strom.AppImage")
     assert "larger than the release records" in failures[0]
 
 
@@ -524,7 +524,7 @@ def test_download_follows_supported_redirects(qtbot, fake_service, tmp_path):
     prepared: list = []
     service.downloadPrepared.connect(prepared.append)
     with qtbot.waitSignal(service.downloadPrepared, timeout=10_000):
-        service.download(_release(fake_service.base, payload), tmp_path)
+        service.download(_release(fake_service.base, payload), tmp_path / "Strom.AppImage")
     assert prepared[0].staging.read_bytes() == payload
 
 
@@ -539,7 +539,7 @@ def test_download_refuses_redirect_outside_supported_hosts(
     failures: list[str] = []
     service.downloadFailed.connect(failures.append)
     with qtbot.waitSignal(service.downloadFailed, timeout=10_000):
-        service.download(_release(fake_service.base, payload), tmp_path)
+        service.download(_release(fake_service.base, payload), tmp_path / "Strom.AppImage")
     assert "redirected outside the supported hosts" in failures[0]
 
 
@@ -579,7 +579,7 @@ def test_cancel_stops_the_download_and_removes_staging(
     )
     cancelled: list = []
     service.cancelled.connect(lambda: cancelled.append(1))
-    assert service.download(_release(fake_service.base, payload), tmp_path) is True
+    assert service.download(_release(fake_service.base, payload), tmp_path / "Strom.AppImage") is True
     qtbot.waitUntil(lambda: service.received > 0, timeout=10_000)
     with qtbot.waitSignal(service.cancelled, timeout=10_000):
         service.cancel()
@@ -826,3 +826,92 @@ def test_install_refused_when_another_window_holds_the_lock(
     assert blocks == [True, False]
     assert target.read_bytes() == b"old"
     holder.release()
+
+
+def test_check_reads_each_release_page_separately(qtbot, fake_service):
+    service = _local_service(fake_service.base)
+    service._config = ServiceConfig(
+        releases_url=f"{fake_service.base}/fixtures/releases", page_size=1,
+    )
+    fake_service.routes = {
+        "/fixtures/releases?per_page=1&page=1": (
+            200, json.dumps(_release_payload(fake_service.base, b"payload")).encode(),
+        ),
+        "/fixtures/releases?per_page=1&page=2": (200, b"[]"),
+    }
+    with qtbot.waitSignal(service.checkCompleted, timeout=3000) as result:
+        service.check_now()
+    assert result.args[0].candidate.version == Version("0.4.0")
+
+
+def test_check_then_download_can_recover_staged_transaction(
+    qtbot, fake_service, tmp_path,
+):
+    target_path = _fake_appimage(tmp_path)
+    original = target_path.read_bytes()
+    info = target_path.stat()
+    target = app_identity.AppImageIdentity(
+        path=target_path, device=info.st_dev, inode=info.st_ino, arch="x86_64",
+    )
+    payload = b"new AppImage payload"
+    digest = hashlib.sha256(payload).hexdigest()
+    fake_service.routes = {
+        "/fixtures/releases?per_page=100&page=1": (
+            200, json.dumps(_release_payload(fake_service.base, payload)).encode(),
+        ),
+        f"/fixtures/download/v0.4.0/{ASSET_NAME}": (200, payload),
+        "/fixtures/download/v0.4.0/SHA256SUMS": (
+            200, f"{digest}  {ASSET_NAME}\n".encode(),
+        ),
+    }
+    service = _local_service(fake_service.base)
+    with qtbot.waitSignal(service.checkCompleted, timeout=3000) as checked:
+        service.check_now()
+    release = checked.args[0].candidate
+    with qtbot.waitSignal(service.downloadPrepared, timeout=3000) as downloaded:
+        service.download(release, target_path)
+    prepared = downloaded.args[0]
+    assert prepared.staging.read_bytes() == payload
+    transaction = update_install.prepare_transaction(
+        target, release, prepared.staging, prepared.size, prepared.sha256,
+    )
+    assert update_install.recover(target) is None
+    assert target_path.read_bytes() == original
+    assert not prepared.staging.exists()
+    assert not transaction.backup.exists()
+    assert not update_install.journal_path(target_path).exists()
+
+
+@pytest.mark.parametrize("operation", ["check", "download"])
+def test_supported_redirect_loop_stops_at_limit(
+    qtbot, fake_service, tmp_path, monkeypatch, operation,
+):
+    service = _local_service(fake_service.base)
+    path = (
+        "/fixtures/releases?per_page=100&page=1"
+        if operation == "check"
+        else f"/fixtures/download/v0.4.0/{ASSET_NAME}"
+    )
+    fake_service.redirects = {path: fake_service.base + path}
+    requests = []
+    get = service._manager.get
+
+    def record_request(request):
+        requests.append(request.url().toString())
+        return get(request)
+
+    monkeypatch.setattr(service._manager, "get", record_request)
+    failed = service.checkFailed if operation == "check" else service.downloadFailed
+    try:
+        with qtbot.waitSignal(failed, timeout=3000):
+            if operation == "check":
+                service.check_now()
+            else:
+                service.download(
+                    _release(fake_service.base, b"payload"), tmp_path / "Strom.AppImage",
+                )
+        assert len(requests) == service._config.max_redirects + 1
+        assert not service.is_busy()
+        assert not list(tmp_path.iterdir())
+    finally:
+        service.cancel()
