@@ -9,7 +9,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
 
 from strom.linux_gui.runner import RunnerState, make_launch_spec
 from strom.linux_gui.ui_text import (
@@ -161,6 +161,9 @@ class RunPaneMixin(WindowBase):
         )
         details.addWidget(self._log_label)
         self._log = QtWidgets.QPlainTextEdit(group)
+        self._log.setFont(QtGui.QFontDatabase.systemFont(
+            QtGui.QFontDatabase.SystemFont.FixedFont
+        ))
         self._log.setAccessibleName("Activity log")
         self._log.setReadOnly(True)
         self._log.setMaximumBlockCount(_LOG_MAX_BLOCKS)

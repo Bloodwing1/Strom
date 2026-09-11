@@ -19,7 +19,6 @@ from strom.linux_gui.setup_files import (
 )
 from strom.linux_gui.ui_text import (
     _CONTRIBUTE_URL,
-    _ERROR_COLOR,
     _PRICE_HELP_TEXT,
     _PRICE_SIGNUP_URL,
     _STEP_SHORT_NAMES,
@@ -42,7 +41,10 @@ class SetupPaneMixin(WindowBase):
 
         self._step_indicator = QtWidgets.QFrame(page)
         self._step_indicator.setObjectName("stepIndicator")
-        self._step_indicator.setFixedSize(168, 344)
+        self._step_indicator.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Maximum,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         indicator_row = QtWidgets.QVBoxLayout(self._step_indicator)
         indicator_row.setContentsMargins(12, 18, 12, 14)
         indicator_row.setSpacing(6)
@@ -50,21 +52,11 @@ class SetupPaneMixin(WindowBase):
         setup_label.setObjectName("setupLabel")
         indicator_row.addWidget(setup_label)
         indicator_row.addSpacing(8)
-        self._step_buttons: list[QtWidgets.QPushButton] = []
-        for index, name in enumerate(_STEP_SHORT_NAMES):
-            button = QtWidgets.QPushButton(name, self._step_indicator)
-            button.setProperty("step", True)
-            button.setSizePolicy(
-                QtWidgets.QSizePolicy.Policy.Expanding,
-                QtWidgets.QSizePolicy.Policy.Fixed,
-            )
-            button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
-            button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(
-                lambda _checked=False, step=index: self._show_step(step)
-            )
-            indicator_row.addWidget(button)
-            self._step_buttons.append(button)
+        self._step_list = QtWidgets.QListWidget(self._step_indicator)
+        self._step_list.setAccessibleName("Setup steps")
+        self._step_list.addItems(_STEP_SHORT_NAMES)
+        self._step_list.currentRowChanged.connect(self._navigate_step)
+        indicator_row.addWidget(self._step_list)
         indicator_row.addStretch(1)
         layout.addWidget(self._step_indicator)
         layout.setAlignment(
@@ -123,6 +115,11 @@ class SetupPaneMixin(WindowBase):
 
         self._show_step(0)
         return page
+
+    def _navigate_step(self, index: int) -> None:
+        if index >= 0:
+            self._show_step(index)
+            self._step_list.setFocus()
 
     def _show_step(self, index: int) -> None:
         index = max(0, min(index, self._account_pages.count() - 1))
@@ -345,7 +342,8 @@ class SetupPaneMixin(WindowBase):
 
         self._location_error = QtWidgets.QLabel("", box)
         self._location_error.setWordWrap(True)
-        self._location_error.setStyleSheet(f"color: {_ERROR_COLOR};")
+        self._location_error.setProperty("statusKind", "error")
+        repolish(self._location_error)
         layout.addWidget(self._location_error)
 
         self._weather_status = QtWidgets.QLabel("", box)
@@ -612,20 +610,16 @@ class SetupPaneMixin(WindowBase):
             status.tapo_saved,
         )
         current = self._account_pages.currentIndex()
-        for index, (button, name, complete) in enumerate(
-            zip(self._step_buttons, _STEP_SHORT_NAMES, done)
-        ):
+        for index, (name, complete) in enumerate(zip(_STEP_SHORT_NAMES, done)):
+            item = self._step_list.item(index)
             text = f"{index + 1} {self._translated(name)}"
             if complete and index != current:
-                button.setText(f"✓ {text}")
+                item.setText(f"✓ {text}")
             else:
-                button.setText(text)
-            font = button.font()
-            font.setBold(index == current)
-            button.setFont(font)
-            button.setProperty("stepCurrent", index == current)
-            button.setProperty("stepComplete", complete and index != current)
-            repolish(button)
+                item.setText(text)
+        blocker = QtCore.QSignalBlocker(self._step_list)
+        self._step_list.setCurrentRow(current)
+        del blocker
 
     def _set_chip(
         self, chip: QtWidgets.QLabel, text: str, *, error: bool = False

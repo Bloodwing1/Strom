@@ -33,9 +33,8 @@ from strom.linux_gui.settings_pane import SettingsPaneMixin
 from strom.linux_gui.setup_check import SetupChecker
 from strom.linux_gui.setup_pane import SetupPaneMixin
 from strom.linux_gui.tray import TrayMixin
-from strom.linux_gui.theme import ThermalMark, stylesheet
+from strom.linux_gui.theme import ThermalMark, apply_typography
 from strom.linux_gui.ui_text import (
-    _CONTENT_MAX_WIDTH,
     _ELAPSED_TICK_MS,
     _HORIZON_HELP_TEXT,
     _INITIAL_SIZE,
@@ -72,7 +71,6 @@ class MainWindow(
         update_service: UpdateService | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setStyleSheet(stylesheet())
         self._settings = settings if settings is not None else QtCore.QSettings()
         # Production launches stay fixed to make_launch_spec; tests inject a
         # fake-child factory instead of running the real CLI.
@@ -128,6 +126,7 @@ class MainWindow(
         self._elapsed_timer.setInterval(_ELAPSED_TICK_MS)
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
         self._build_ui()
+        apply_typography(self)
         self._restore_settings()
         self._language.currentIndexChanged.connect(self._apply_language)
         self._apply_language()
@@ -143,19 +142,16 @@ class MainWindow(
         self.setWindowTitle("Strom")
         self.resize(*_INITIAL_SIZE)
 
-        # One centered column keeps line lengths readable on wide screens.
+        # Let the working area use the available desktop window width.
         content = QtWidgets.QWidget(self)
         content.setObjectName("pageCanvas")
         outer = QtWidgets.QHBoxLayout(content)
         outer.setContentsMargins(0, 0, 0, 0)
         column = QtWidgets.QWidget(content)
-        column.setMaximumWidth(_CONTENT_MAX_WIDTH)
-        outer.addStretch(1)
-        outer.addWidget(column, 8)
-        outer.addStretch(1)
+        outer.addWidget(column, 1)
 
         body = QtWidgets.QVBoxLayout(column)
-        body.setContentsMargins(30, 22, 30, 28)
+        body.setContentsMargins(18, 16, 18, 16)
         body.setSpacing(14)
 
         header = QtWidgets.QHBoxLayout()
@@ -163,9 +159,6 @@ class MainWindow(
         header.addWidget(ThermalMark(column))
         brand = QtWidgets.QVBoxLayout()
         brand.setSpacing(0)
-        eyebrow = QtWidgets.QLabel("OPEN-SOURCE SMART HEATING", column)
-        eyebrow.setObjectName("brandEyebrow")
-        brand.addWidget(eyebrow)
         title = QtWidgets.QLabel("Strom", column)
         title.setObjectName("brandTitle")
         brand.addWidget(title)
@@ -230,6 +223,11 @@ class MainWindow(
         body.insertWidget(2, self._update_notice)
 
         self._build_tab_order()
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.ApplicationFontChange:
+            apply_typography(self)
 
     def _set_update_run_block(self, blocked: bool) -> None:
         """Window hook called by the coordinator around accepted updates."""
@@ -345,8 +343,7 @@ class MainWindow(
                               self._weather_status, self._price_status, self._tapo_status,
                               self._chip_weather, self._chip_price, self._chip_plug,
                               self._status_label, self._status_detail,
-                              self._location_error, self._update_notice_label,
-                              *self._step_buttons):
+                              self._location_error, self._update_notice_label):
                     continue
                 source = widget.property("sourceText") or widget.text()
                 widget.setProperty("sourceText", source)
@@ -387,6 +384,7 @@ class MainWindow(
         if cycle_active:
             self._pages.setCurrentIndex(1)
         self._edit_setup.setEnabled(allow)
+        self._step_list.setEnabled(allow)
         self._busy.setVisible(cycle_active)
         for widget in (
             self._city,

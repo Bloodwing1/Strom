@@ -137,6 +137,36 @@ def test_initial_controls(make_window):
     assert window._log.accessibleName() == "Activity log"
 
 
+def test_setup_navigation_accepts_keyboard(qtbot, make_window):
+    from PySide6.QtCore import Qt
+
+    window = make_window()
+    window.show()
+    window._step_list.setFocus()
+    qtbot.keyClick(window._step_list, Qt.Key.Key_Down)
+    assert window._account_pages.currentIndex() == 1
+    qtbot.keyClick(window._step_list, Qt.Key.Key_Down)
+    assert window._account_pages.currentIndex() == 2
+
+
+def test_controls_inherit_palette_changes(make_window):
+    from PySide6.QtGui import QColor, QPalette
+
+    window = make_window()
+    palette = window.palette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#242424"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#eeeeee"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#181818"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#eeeeee"))
+    window.setPalette(palette)
+    for widget in (window._repeat_checkbox, window._weather_key_edit, window._log):
+        assert widget.palette().color(QPalette.ColorRole.Text) == QColor("#eeeeee")
+    window._repeat_checkbox.setChecked(True)
+    window._repeat_checkbox.setEnabled(False)
+    assert window._repeat_checkbox.isChecked()
+    assert not window.styleSheet()
+
+
 def test_custom_folder_toggle_reveals_editor_and_resets(make_window, tmp_path):
     window = make_window()
     custom_dir = tmp_path / "my-strom-settings"
