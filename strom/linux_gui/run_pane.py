@@ -303,7 +303,7 @@ class RunPaneMixin(WindowBase):
             )
         box = QtWidgets.QMessageBox(self)
         box.setWindowTitle(self._translated("Start heating"))
-        box.setText(self._translated(_CONFIRM_TEXT))
+        box.setText(text)
         run_button = box.addButton(
             self._translated("Start heating"),
             QtWidgets.QMessageBox.ButtonRole.AcceptRole,

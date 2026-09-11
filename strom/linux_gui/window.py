@@ -36,10 +36,8 @@ from strom.linux_gui.tray import TrayMixin
 from strom.linux_gui.theme import ThermalMark, apply_typography
 from strom.linux_gui.ui_text import (
     _ELAPSED_TICK_MS,
-    _HORIZON_HELP_TEXT,
     _INITIAL_SIZE,
     _INTRO_TEXT,
-    _REPEAT_HELP_TEXT,
     _RUNNER_LABELS,
 )
 from strom.linux_gui.update_service import (
@@ -338,22 +336,34 @@ class MainWindow(
                 widget.setProperty("sourceTitle", source)
                 widget.setTitle(self._translated(source))
             elif isinstance(widget, (QtWidgets.QLabel, QtWidgets.QAbstractButton)):
-                if widget in (self._next_button, self._location_note,
-                              self._checklist_label, self._settings_folder_label,
-                              self._weather_status, self._price_status, self._tapo_status,
-                              self._chip_weather, self._chip_price, self._chip_plug,
-                              self._status_label, self._status_detail,
-                              self._location_error, self._update_notice_label):
-                    continue
-                source = widget.property("sourceText") or widget.text()
-                widget.setProperty("sourceText", source)
-                widget.setText(self._translated(source))
+                # Dynamic labels are refreshed by their own code paths.
+                dynamic = widget in (
+                    self._next_button, self._location_note,
+                    self._checklist_label, self._settings_folder_label,
+                    self._weather_status, self._price_status, self._tapo_status,
+                    self._chip_weather, self._chip_price, self._chip_plug,
+                    self._status_label, self._status_detail,
+                    self._location_error, self._update_notice_label,
+                )
+                if not dynamic:
+                    source = widget.property("sourceText") or widget.text()
+                    widget.setProperty("sourceText", source)
+                    widget.setText(self._translated(source))
             elif isinstance(widget, QtWidgets.QLineEdit):
                 source = widget.property("sourcePlaceholder") or widget.placeholderText()
                 widget.setProperty("sourcePlaceholder", source)
                 widget.setPlaceholderText(self._translated(source))
-        self._horizon.setToolTip(self._translated(_HORIZON_HELP_TEXT))
-        self._repeat_checkbox.setToolTip(self._translated(_REPEAT_HELP_TEXT))
+            if widget is not self._run_button and widget.toolTip():
+                source = widget.property("sourceToolTip") or widget.toolTip()
+                widget.setProperty("sourceToolTip", source)
+                widget.setToolTip(self._translated(source))
+            if widget.accessibleName():
+                source = (
+                    widget.property("sourceAccessibleName")
+                    or widget.accessibleName()
+                )
+                widget.setProperty("sourceAccessibleName", source)
+                widget.setAccessibleName(self._translated(source))
         self._help_menu.setTitle(self._translated("Help"))
         self._language_label.setText(self._translated("Language"))
         self._check_updates_action.setText(self._translated("Check for updates"))

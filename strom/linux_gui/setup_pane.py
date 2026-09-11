@@ -32,6 +32,44 @@ from strom.linux_gui.window_base import WindowBase
 from strom.plug import PlugCredentials
 
 
+class _StepHost(QtWidgets.QWidget):
+    """Hosts one setup step at a time.
+
+    A QStackedWidget would reserve the height of its tallest step, leaving a
+    dead gap under short steps like the language card. Showing only the
+    active step lets the card area grow and shrink with its content.
+    """
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._pages: list[QtWidgets.QWidget] = []
+        self._index = 0
+        self._layout = QtWidgets.QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+
+    def addWidget(self, page: QtWidgets.QWidget) -> None:
+        self._layout.addWidget(page)
+        page.hide()
+        self._pages.append(page)
+
+    def count(self) -> int:
+        return len(self._pages)
+
+    def currentIndex(self) -> int:
+        return self._index
+
+    def widget(self, index: int) -> QtWidgets.QWidget:
+        return self._pages[index]
+
+    def currentWidget(self) -> QtWidgets.QWidget:
+        return self._pages[self._index]
+
+    def setCurrentIndex(self, index: int) -> None:
+        for position, page in enumerate(self._pages):
+            page.setVisible(position == index)
+        self._index = index
+
+
 class SetupPaneMixin(WindowBase):
     def _build_accounts_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget(parent)
@@ -67,7 +105,7 @@ class SetupPaneMixin(WindowBase):
         workspace_layout = QtWidgets.QVBoxLayout(workspace)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(14)
-        self._account_pages = QtWidgets.QStackedWidget(page)
+        self._account_pages = _StepHost(page)
         for builder in (
             self._build_language_block, self._build_weather_block,
             self._build_price_block, self._build_tapo_block
@@ -88,6 +126,7 @@ class SetupPaneMixin(WindowBase):
         navigation = QtWidgets.QHBoxLayout()
         self._setup_later = QtWidgets.QPushButton("Set up later", page)
         self._setup_later.setFlat(True)
+        self._setup_later.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         self._setup_later.clicked.connect(self._finish_setup)
         navigation.addWidget(self._setup_later)
         navigation.addStretch(1)
@@ -136,7 +175,7 @@ class SetupPaneMixin(WindowBase):
             self._language,
             self._city,
             self._price_key_edit,
-            self._tapo_email,
+            self._tapo_ip,
         )
         fields[index].setFocus()
         self._sync_intro_visibility()
@@ -324,6 +363,9 @@ class SetupPaneMixin(WindowBase):
         self._weather_key_edit = QtWidgets.QLineEdit(box)
         self._weather_key_edit.setAccessibleName("Weather API key")
         self._weather_key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self._weather_key_edit.setPlaceholderText(
+            "Paste your weather key here"
+        )
         self._weather_key_edit.setToolTip(
             "Your key is hidden while typing; paste works normally."
         )
@@ -368,6 +410,9 @@ class SetupPaneMixin(WindowBase):
         self._price_key_edit = QtWidgets.QLineEdit(box)
         self._price_key_edit.setAccessibleName("Electricity price API key")
         self._price_key_edit.setEchoMode(QtWidgets.QLineEdit.EchoMode.Password)
+        self._price_key_edit.setPlaceholderText(
+            "Paste your electricity price key here"
+        )
         self._price_key_edit.setToolTip(
             "Your key is hidden while typing; paste works normally."
         )
@@ -412,6 +457,7 @@ class SetupPaneMixin(WindowBase):
         form.setSpacing(8)
         self._tapo_ip = QtWidgets.QLineEdit(box)
         self._tapo_ip.setAccessibleName("Plug IP address")
+        self._tapo_ip.setPlaceholderText("Plug IP address, e.g. 192.168.1.42")
         self._tapo_ip.setToolTip(
             "The Tapo app shows it under the plug's device information."
         )
@@ -673,7 +719,9 @@ class SetupPaneMixin(WindowBase):
             return False
         self._weather_key_edit.clear()
         self._set_chip(chip, self._translated("Saved"))
-        self._append_log(f"Weather key saved to {path}")
+        self._append_log(
+            self._translated("Weather key saved to {path}").format(path=path)
+        )
         self._refresh_setup_status()
         return True
 
@@ -701,7 +749,11 @@ class SetupPaneMixin(WindowBase):
             return False
         self._price_key_edit.clear()
         self._set_chip(chip, self._translated("Saved"))
-        self._append_log(f"Electricity price key saved to {path}")
+        self._append_log(
+            self._translated("Electricity price key saved to {path}").format(
+                path=path
+            )
+        )
         self._refresh_setup_status()
         return True
 
@@ -736,7 +788,9 @@ class SetupPaneMixin(WindowBase):
             )
             return False
         self._tapo_ip.clear()
-        self._append_log(f"Plug address saved to {path}")
+        self._append_log(
+            self._translated("Plug address saved to {path}").format(path=path)
+        )
         self._refresh_setup_status()
         return True
 

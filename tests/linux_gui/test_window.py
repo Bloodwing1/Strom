@@ -236,6 +236,41 @@ def test_help_texts_name_the_services(make_window):
     assert "Tapo" in window._tapo_help_text
 
 
+def test_setup_fields_show_examples_until_filled(make_window):
+    window = make_window()
+    assert window._weather_key_edit.placeholderText() == (
+        "Paste your weather key here"
+    )
+    assert window._price_key_edit.placeholderText() == (
+        "Paste your electricity price key here"
+    )
+    assert "192.168.1.42" in window._tapo_ip.placeholderText()
+
+
+def test_tooltips_placeholders_and_accessible_names_translate(make_window):
+    window = make_window()
+    window._language.setCurrentIndex(1)  # Spanish
+
+    assert window._weather_key_edit.placeholderText() == (
+        "Pega aquí tu clave de OpenWeatherMap"
+    )
+    assert window._price_key_edit.placeholderText() == (
+        "Pega aquí tu token de ENTSO-E"
+    )
+    assert window._weather_test.toolTip() == (
+        "Pide a OpenWeatherMap que compruebe la clave antes de usarla."
+    )
+    assert window._tapo_save.toolTip().startswith("Guarda la dirección")
+    assert window._status_label.accessibleName() == "Estado del ciclo"
+    assert window._step_list.accessibleName() == "Pasos de configuración"
+
+    window._language.setCurrentIndex(0)  # back to English
+    assert window._status_label.accessibleName() == "Cycle status"
+    assert window._weather_test.toolTip() == (
+        "Ask OpenWeatherMap to check the key before you rely on it."
+    )
+
+
 # --- setup saves ---
 
 
@@ -398,6 +433,54 @@ def test_environment_overrides_count_as_saved(make_window, monkeypatch):
     assert window._price_status.text() == "Saved"
     assert window._tapo_status.text() == "Saved"
     assert "All set" in window._checklist_label.text()
+
+
+def test_missing_heating_chips_are_marked(make_window, tmp_path):
+    window = make_window()
+    assert window._chip_weather.property("statusKind") == "missing"
+    assert window._chip_plug.property("statusKind") == "missing"
+
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    (config_dir / "weather_api_key.txt").write_text("w\n")
+    (config_dir / "price_api_key.txt").write_text("p\n")
+    (config_dir / "tapologin.env").write_text("DEVICEIP=10.0.0.9\n")
+    window._config_dir_edit.setText(str(config_dir))
+    window._refresh_setup_status()
+
+    assert window._chip_weather.property("statusKind") == "ready"
+    assert window._chip_price.property("statusKind") == "ready"
+    # Address only: the plug is not verified yet, so it still needs attention.
+    assert window._chip_plug.property("statusKind") == "missing"
+
+
+def test_confirmation_mentions_automatic_repeats(make_window, monkeypatch):
+    window = make_window()
+    captured: list[str] = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "exec",
+        lambda box: captured.append(box.text()) or 0,
+    )
+
+    window._repeat_checkbox.setChecked(True)
+    assert window._confirm_run() is False
+    assert "Automatic repeats are on" in captured[-1]
+
+    window._repeat_checkbox.setChecked(False)
+    window._confirm_run()
+    assert "Automatic repeats are on" not in captured[-1]
+    assert "one hour" in captured[-1]
+
+
+def test_setup_log_lines_translate(make_window, tmp_path):
+    window = make_window()
+    window._language.setCurrentIndex(1)  # Spanish
+    window._config_dir_edit.setText(str(tmp_path / "cfg"))
+    window._weather_key_edit.setText("key")
+    window._weather_save.click()
+
+    assert "Clave de OpenWeatherMap guardada en" in window._log.toPlainText()
 
 
 def test_secrets_never_reach_settings(make_window, tmp_path, settings):

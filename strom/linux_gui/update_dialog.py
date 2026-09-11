@@ -59,8 +59,12 @@ class UpdateDialog(QtWidgets.QDialog):
         self._current_label.setAccessibleName("Current version")
         self._available_label = QtWidgets.QLabel("", self)
         self._available_label.setAccessibleName("Available version")
-        form.addRow(translate("Current version:"), self._current_label)
-        form.addRow(translate("Available version:"), self._available_label)
+        self._current_key = QtWidgets.QLabel(translate("Current version:"), self)
+        self._available_key = QtWidgets.QLabel(
+            translate("Available version:"), self
+        )
+        form.addRow(self._current_key, self._current_label)
+        form.addRow(self._available_key, self._available_label)
         layout.addLayout(form)
 
         self._status_label = QtWidgets.QLabel("", self)
@@ -171,10 +175,20 @@ class UpdateDialog(QtWidgets.QDialog):
         translate = self._translate
         self.setWindowTitle(translate("Check for updates"))
         self._heading.setText(translate("Strom updates"))
+        self._current_key.setText(translate("Current version:"))
+        self._available_key.setText(translate("Available version:"))
         self._check_button.setText(translate("Check for updates"))
         self._install_button.setText(translate("Update and restart"))
         self._page_button.setText(translate("Open release page"))
         self._close_button.setText(translate("Close"))
+        self._current_label.setAccessibleName(translate("Current version"))
+        self._available_label.setAccessibleName(translate("Available version"))
+        self._status_label.setAccessibleName(translate("Update status"))
+        self._progress.setAccessibleName(translate("Update download progress"))
+        self._check_button.setAccessibleName(translate("Check for updates"))
+        self._install_button.setAccessibleName(translate("Update and restart"))
+        self._page_button.setAccessibleName(translate("Open release page"))
+        self._close_button.setAccessibleName(translate("Close"))
         self.refresh()
 
     # --- actions ---

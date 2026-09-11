@@ -131,13 +131,14 @@ SPANISH = {
         'ventana abierta hasta que termine el ciclo.'
     ),
     (
-        'A control cycle is starting or running, so the window must stay open until the'
-        ' cycle finishes. There is no safe way to cancel a running cycle from here; the'
-        ' run button and form are disabled until the child process exits.'
+        'A heating run is starting or in progress, so the window must stay open '
+        'until it finishes. A run cannot be cancelled safely from here; the Run '
+        'button and settings stay disabled until it is done.'
     ): (
-        'Hay un ciclo iniciándose o en curso. Mantén esta ventana abierta hasta que '
-        'termine. No se puede cancelar de forma segura desde aquí; los controles '
-        'permanecerán desactivados hasta que termine.'
+        'Hay una ejecución de calefacción iniciándose o en curso. Mantén esta '
+        'ventana abierta hasta que termine. No se puede cancelar de forma segura '
+        'desde aquí; el botón de inicio y los ajustes permanecerán desactivados '
+        'hasta que acabe.'
     ),
     'A newer version of Strom ({available}) is available. (you are running {current})': (
         'Hay una versión más nueva de Strom ({available}) disponible. '
@@ -617,8 +618,7 @@ SPANISH.update({
         "<p>Strom usa OpenWeatherMap para la previsión del tiempo.</p>"
         "<ol><li>Abre https://openweathermap.org/api y crea una cuenta "
         "gratuita.</li><li>Abre API keys en tu cuenta.</li>"
-        "<li>Copia la clave, pégala aquí y pulsa Guardar clave del "
-        "tiempo.</li></ol>"
+        "<li>Copia la clave, pégala aquí y pulsa Guardar.</li></ol>"
     ),
     (
         "<html><head/><body><p>Strom uses the <b>ENTSO-E Transparency "
@@ -633,7 +633,7 @@ SPANISH.update({
         "<ol><li>Crea una cuenta gratuita en "
         "https://transparency.entsoe.eu.</li><li>Solicita un token de Web API "
         "siguiendo las instrucciones del servicio; lo recibirás por "
-        "correo.</li><li>Pégalo aquí y pulsa Guardar token de precios.</li>"
+        "correo.</li><li>Pégalo aquí y pulsa Guardar.</li>"
         "</ol>"
     ),
     (
@@ -657,4 +657,54 @@ SPANISH.update({
         "Cuántas horas planifica Strom por adelantado. Esto no alarga la "
         "ejecución. Se recomiendan 24 horas."
     ),
+})
+
+# Tooltips, accessible names, step headings and log lines.
+SPANISH.update({
+    "Setup steps": "Pasos de configuración",
+    "Strom's Little Radiator": "El radiador de Strom",
+    "Ask OpenWeatherMap to check the key before you rely on it.": (
+        "Pide a OpenWeatherMap que compruebe la clave antes de usarla."
+    ),
+    "Ask ENTSO-E for recent prices to check the key.": (
+        "Pide a ENTSO-E los precios recientes para comprobar la clave."
+    ),
+    "The Tapo app shows it under the plug's device information.": (
+        "La aplicación Tapo la muestra en la información del dispositivo."
+    ),
+    (
+        "Save the plug address. The account details are checked by Test and "
+        "never stored."
+    ): (
+        "Guarda la dirección del enchufe. La cuenta se comprueba con Probar "
+        "y no se guarda."
+    ),
+    "Try to reach the plug on your network with these details.": (
+        "Intenta conectar con el enchufe en tu red con estos datos."
+    ),
+    (
+        "Open the Strom repository and help add support for your country."
+    ): (
+        "Abre el repositorio de Strom y ayuda a añadir soporte para tu país."
+    ),
+    "Weather API key": "Clave de OpenWeatherMap",
+    "Electricity price API key": "Token de ENTSO-E",
+    "Plug IP address": "Dirección IP del enchufe",
+    "Plug account email": "Correo de la cuenta del enchufe",
+    "Plug account password": "Contraseña de la cuenta del enchufe",
+    "City or village in Spain": "Ciudad o pueblo de España",
+    "Cycle status": "Estado del ciclo",
+    "Cycle progress": "Progreso del ciclo",
+    "Setup checklist": "Lista de configuración",
+    "Activity log": "Registro de actividad",
+    "Settings folder": "Carpeta de configuración",
+    "Current version": "Versión actual",
+    "Available version": "Versión disponible",
+    "Weather key saved to {path}": (
+        "Clave de OpenWeatherMap guardada en {path}"
+    ),
+    "Electricity price key saved to {path}": (
+        "Token de ENTSO-E guardado en {path}"
+    ),
+    "Plug address saved to {path}": "Dirección del enchufe guardada en {path}",
 })

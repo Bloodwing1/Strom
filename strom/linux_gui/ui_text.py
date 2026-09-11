@@ -36,7 +36,6 @@ _RUNNER_LABELS = {
     RunnerState.FailedToStart: "Couldn't start",
     RunnerState.Failed: "Couldn't finish",
 }
-_ERROR_COLOR = "#c0392b"
 _RUN_BLOCKED_TEXT = (
     "An update is being installed; starting a heating cycle is blocked "
     "until it finishes or is rolled back."
@@ -79,10 +78,9 @@ _REPEAT_HELP_TEXT = (
     "must stay running for this to keep your home warm."
 )
 _CLOSE_REFUSED_TEXT = (
-    "A control cycle is starting or running, so the window must stay open "
-    "until the cycle finishes. There is no safe way to cancel a running "
-    "cycle from here; the run button and form are disabled until the child "
-    "process exits."
+    "A heating run is starting or in progress, so the window must stay open "
+    "until it finishes. A run cannot be cancelled safely from here; the Run "
+    "button and settings stay disabled until it is done."
 )
 _WEATHER_SIGNUP_URL = "https://openweathermap.org/api"
 _PRICE_SIGNUP_URL = "https://transparency.entsoe.eu"
