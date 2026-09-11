@@ -97,6 +97,35 @@ MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024  # 1 GiB documented maximum
 MAX_REDIRECTS = 5
 PROGRESS_STEP_BYTES = 256 * 1024
 
+#: AF_UNIX socket paths are length-capped by the kernel (104 bytes on macOS,
+#: 108 on Linux). A platform temp directory can spend most of that budget on
+#: its own name, so the restart handshake socket prefers a short directory
+#: that can still hold a unique basename.
+SOCKET_PATH_LIMIT = 100
+SHORT_SOCKET_DIR = "/tmp" if os.path.isdir("/tmp") else None
+
+
+def _handshake_socket_path() -> str:
+    """A unique AF_UNIX path that fits every supported platform's limit.
+
+    macOS' per-user temp directory alone can exceed the socket path limit,
+    which made ``QLocalServer.listen`` fail there with a name error, so the
+    short directory wins whenever it can hold the unique name. The hashed
+    fallback is only for platforms whose temp directory leaves no room.
+    """
+    unique = f"strom-update-ack-{os.getpid()}-{uuid.uuid4().hex}"
+    directories = [
+        directory
+        for directory in (SHORT_SOCKET_DIR, tempfile.gettempdir())
+        if directory
+    ]
+    for directory in directories:
+        if len(f"{directory}/{unique}".encode()) <= SOCKET_PATH_LIMIT:
+            return f"{directory}/{unique}"
+    digest = hashlib.sha256(unique.encode()).hexdigest()[:16]
+    return f"{directories[0]}/strom-ack-{digest}"
+
+
 #: AppImage/AppDir loader variables that must not leak into the replacement.
 _RESTART_ENV_STRIP = (
     "APPIMAGE",
@@ -1075,10 +1104,7 @@ class UpdateCoordinator(QObject):
             self._settle_failed(restore=False, detail="nothing to start")
             return
         self._phase = _Phase.LAUNCH
-        name = (
-            f"{tempfile.gettempdir()}/strom-update-ack-"
-            f"{os.getpid()}-{uuid.uuid4().hex}"
-        )
+        name = _handshake_socket_path()
         self._ack_token = uuid.uuid4().hex
         try:
             server = AckServer(self, name, self._ack_token)

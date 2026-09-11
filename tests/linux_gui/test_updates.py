@@ -588,6 +588,28 @@ def test_cancel_stops_the_download_and_removes_staging(
 # --- coordinator: the full install transaction with fake children ---
 
 
+def test_handshake_socket_path_fits_the_kernel_limit(monkeypatch, tmp_path):
+    """The handshake socket must stay inside the AF_UNIX path limit.
+
+    macOS spends most of the 104-byte budget on its per-user temp directory,
+    which made ``QLocalServer.listen`` fail with a name error and turned a
+    healthy update into a refusal; a deep TMPDIR is the same hazard on Linux.
+    """
+    from strom.linux_gui import update_service
+
+    deep_dir = tmp_path / ("deep/" * 40)
+    deep_dir.mkdir(parents=True)
+    monkeypatch.setattr(update_service.tempfile, "tempdir", str(deep_dir))
+
+    first = update_service._handshake_socket_path()
+    second = update_service._handshake_socket_path()
+
+    assert len(first.encode()) <= update_service.SOCKET_PATH_LIMIT
+    assert len(second.encode()) <= update_service.SOCKET_PATH_LIMIT
+    assert str(os.getpid()) in first or "strom-ack-" in first
+    assert first != second
+
+
 FAKE_CANDIDATE = """#!/usr/bin/env python3
 import json
 import os

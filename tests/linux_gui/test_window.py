@@ -1250,7 +1250,9 @@ def test_cycle_running_blocks_install_and_child_stays_alive(
     assert window._updater.accept_install(candidate) is False
     assert window._runner.is_active()  # the cycle is untouched
     wait_state(qtbot, window, RunnerState.Completed)
-    assert record == [(Path("/tmp"), 24, "INFO")]
+    # The window canonicalizes the chosen folder before handing it to the
+    # child, and macOS resolves /tmp to /private/tmp.
+    assert record == [(Path("/tmp").resolve(), 24, "INFO")]
 
 
 # --- run summary, automatic repeats, credential checks ---
