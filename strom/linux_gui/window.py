@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from strom.linux_gui.app_identity import install_status
 from strom.linux_gui.external import open_external_url, show_url_fallback
@@ -33,6 +33,7 @@ from strom.linux_gui.settings_pane import SettingsPaneMixin
 from strom.linux_gui.setup_check import SetupChecker
 from strom.linux_gui.setup_pane import SetupPaneMixin
 from strom.linux_gui.tray import TrayMixin
+from strom.linux_gui.theme import ThermalMark, stylesheet
 from strom.linux_gui.ui_text import (
     _CONTENT_MAX_WIDTH,
     _ELAPSED_TICK_MS,
@@ -71,6 +72,7 @@ class MainWindow(
         update_service: UpdateService | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setStyleSheet(stylesheet())
         self._settings = settings if settings is not None else QtCore.QSettings()
         # Production launches stay fixed to make_launch_spec; tests inject a
         # fake-child factory instead of running the real CLI.
@@ -143,31 +145,37 @@ class MainWindow(
 
         # One centered column keeps line lengths readable on wide screens.
         content = QtWidgets.QWidget(self)
+        content.setObjectName("pageCanvas")
         outer = QtWidgets.QHBoxLayout(content)
         outer.setContentsMargins(0, 0, 0, 0)
         column = QtWidgets.QWidget(content)
         column.setMaximumWidth(_CONTENT_MAX_WIDTH)
         outer.addStretch(1)
-        outer.addWidget(column, 1)
+        outer.addWidget(column, 8)
         outer.addStretch(1)
 
         body = QtWidgets.QVBoxLayout(column)
-        body.setContentsMargins(28, 20, 28, 24)
+        body.setContentsMargins(30, 22, 30, 28)
         body.setSpacing(14)
 
         header = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel("Strom · Smarter heating", column)
-        font = title.font()
-        font.setPointSize(font.pointSize() + 5)
-        font.setBold(True)
-        title.setFont(font)
-        header.addWidget(title)
+        header.setSpacing(10)
+        header.addWidget(ThermalMark(column))
+        brand = QtWidgets.QVBoxLayout()
+        brand.setSpacing(0)
+        eyebrow = QtWidgets.QLabel("OPEN-SOURCE SMART HEATING", column)
+        eyebrow.setObjectName("brandEyebrow")
+        brand.addWidget(eyebrow)
+        title = QtWidgets.QLabel("Strom", column)
+        title.setObjectName("brandTitle")
+        brand.addWidget(title)
+        header.addLayout(brand)
         header.addStretch(1)
         body.addLayout(header)
 
         self._intro_label = QtWidgets.QLabel(_INTRO_TEXT, column)
+        self._intro_label.setObjectName("introText")
         self._intro_label.setWordWrap(True)
-        self._intro_label.setForegroundRole(QtGui.QPalette.ColorRole.PlaceholderText)
         body.addWidget(self._intro_label)
 
         self._pages = QtWidgets.QStackedWidget(column)
@@ -178,9 +186,6 @@ class MainWindow(
         heating.setContentsMargins(0, 0, 0, 0)
         heating.setSpacing(14)
         heating.addWidget(self._build_run_group(self._heating_page))
-        self._edit_setup = QtWidgets.QPushButton("Manage accounts", column)
-        self._edit_setup.clicked.connect(self._open_setup)
-        heating.addWidget(self._edit_setup)
         heating.addStretch(1)
         self._pages.addWidget(self._heating_page)
         body.addWidget(self._pages, 1)
@@ -211,8 +216,9 @@ class MainWindow(
         # A non-modal notice when the automatic check finds a newer version:
         # it never steals focus and never blocks setup.
         self._update_notice = QtWidgets.QWidget(column)
+        self._update_notice.setObjectName("updateNotice")
         notice_layout = QtWidgets.QHBoxLayout(self._update_notice)
-        notice_layout.setContentsMargins(0, 0, 0, 0)
+        notice_layout.setContentsMargins(12, 8, 8, 8)
         self._update_notice_label = QtWidgets.QLabel("", self._update_notice)
         self._update_notice_label.setWordWrap(True)
         self._update_notice_label.setAccessibleName("Newer version available")

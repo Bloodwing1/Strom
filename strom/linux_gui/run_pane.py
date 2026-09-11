@@ -9,7 +9,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtWidgets
 
 from strom.linux_gui.runner import RunnerState, make_launch_spec
 from strom.linux_gui.ui_text import (
@@ -17,7 +17,6 @@ from strom.linux_gui.ui_text import (
     _CONFIRM_TEXT,
     _CYCLE_TEXT,
     _DEFAULT_HORIZON,
-    _ERROR_COLOR,
     _HORIZON_HELP_TEXT,
     _LOCATION_NOTE_TEXT,
     _LOG_LEVELS,
@@ -31,30 +30,41 @@ from strom.linux_gui.ui_text import (
     _RUNNER_LABELS,
     _RUN_BLOCKED_TEXT,
 )
+from strom.linux_gui.theme import repolish
 from strom.linux_gui.window_base import WindowBase
 
 
 class RunPaneMixin(WindowBase):
     def _build_run_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Your heating", parent)
+        group.setObjectName("heatingCard")
+        group.setTitle("")
         layout = QtWidgets.QVBoxLayout(group)
-        layout.setSpacing(10)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(11)
+
+        heating_header = QtWidgets.QHBoxLayout()
+        heating_label = QtWidgets.QLabel("Your heating", group)
+        heating_label.setObjectName("sectionEyebrow")
+        heating_header.addWidget(heating_label)
+        heating_header.addStretch(1)
+        self._edit_setup = QtWidgets.QPushButton("Manage accounts", group)
+        self._edit_setup.setFlat(True)
+        self._edit_setup.clicked.connect(self._open_setup)
+        heating_header.addWidget(self._edit_setup)
+        layout.addLayout(heating_header)
 
         self._status_label = QtWidgets.QLabel(
             self._translated(_RUNNER_LABELS[RunnerState.Idle]), group
         )
         self._status_label.setAccessibleName("Cycle status")
+        self._status_label.setObjectName("cycleStatus")
         self._status_label.setWordWrap(True)
-        status_font = self._status_label.font()
-        status_font.setBold(True)
-        self._status_label.setFont(status_font)
         layout.addWidget(self._status_label)
 
         self._status_detail = QtWidgets.QLabel("", group)
         self._status_detail.setWordWrap(True)
-        self._status_detail.setForegroundRole(
-            QtGui.QPalette.ColorRole.PlaceholderText
-        )
+        self._status_detail.setProperty("statusKind", "detail")
         self._status_detail.setVisible(False)
         layout.addWidget(self._status_detail)
 
@@ -66,6 +76,7 @@ class RunPaneMixin(WindowBase):
 
         self._checklist_label = QtWidgets.QLabel("", group)
         self._checklist_label.setAccessibleName("Setup checklist")
+        self._checklist_label.setObjectName("checklist")
         self._checklist_label.setWordWrap(True)
         layout.addWidget(self._checklist_label)
 
@@ -86,6 +97,7 @@ class RunPaneMixin(WindowBase):
         layout.addWidget(self._finish_setup_button)
 
         self._location_note = QtWidgets.QLabel(_LOCATION_NOTE_TEXT, group)
+        self._location_note.setObjectName("locationNote")
         self._location_note.setWordWrap(True)
         layout.addWidget(self._location_note)
 
@@ -96,6 +108,7 @@ class RunPaneMixin(WindowBase):
         self._run_button = QtWidgets.QPushButton(
             "Start heating for the next hour", group
         )
+        self._run_button.setObjectName("primaryAction")
         self._run_button.setDefault(True)
         self._run_button.clicked.connect(self._on_run_clicked)
         layout.addWidget(self._run_button)
@@ -166,20 +179,17 @@ class RunPaneMixin(WindowBase):
     @staticmethod
     def _make_chip(parent: QtWidgets.QWidget) -> QtWidgets.QLabel:
         chip = QtWidgets.QLabel("", parent)
+        chip.setProperty("chip", True)
         chip.setWordWrap(True)
         chip.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
         chip.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
-        chip.setContentsMargins(6, 2, 6, 2)
-        font = chip.font()
-        font.setPointSize(max(1, font.pointSize() - 1))
-        chip.setFont(font)
+        chip.setContentsMargins(0, 0, 0, 0)
         return chip
 
     def _set_detail(self, text: str, *, error: bool = False) -> None:
         self._status_detail.setText(text)
-        self._status_detail.setStyleSheet(
-            f"color: {_ERROR_COLOR};" if error else ""
-        )
+        self._status_detail.setProperty("statusKind", "error" if error else "detail")
+        repolish(self._status_detail)
         self._status_detail.setVisible(bool(text))
 
     def _on_run_clicked(self) -> None:

@@ -818,7 +818,7 @@ def test_malformed_settings_fall_back_to_defaults(settings, make_window):
     assert window._horizon.value() == 24
     assert window._log_level.currentText() == "INFO"
     assert Path(window._config_dir_edit.text()).name == "strom"  # suggestion used
-    assert (window.width(), window.height()) == (720, 640)
+    assert (window.width(), window.height()) == (820, 700)
     assert window._status_label.text() == "Setup needed"
 
 

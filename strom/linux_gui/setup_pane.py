@@ -28,6 +28,7 @@ from strom.linux_gui.ui_text import (
     _WEATHER_SIGNUP_URL,
     city_is_valid,
 )
+from strom.linux_gui.theme import repolish
 from strom.linux_gui.window_base import WindowBase
 from strom.plug import PlugCredentials
 
@@ -35,24 +36,28 @@ from strom.plug import PlugCredentials
 class SetupPaneMixin(WindowBase):
     def _build_accounts_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget(parent)
-        layout = QtWidgets.QVBoxLayout(page)
+        layout = QtWidgets.QHBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(20)
 
-        self._step_indicator = QtWidgets.QWidget(page)
-        indicator_row = QtWidgets.QHBoxLayout(self._step_indicator)
-        indicator_row.setContentsMargins(0, 0, 0, 0)
-        indicator_row.setSpacing(8)
+        self._step_indicator = QtWidgets.QFrame(page)
+        self._step_indicator.setObjectName("stepIndicator")
+        self._step_indicator.setFixedSize(168, 344)
+        indicator_row = QtWidgets.QVBoxLayout(self._step_indicator)
+        indicator_row.setContentsMargins(12, 18, 12, 14)
+        indicator_row.setSpacing(6)
+        setup_label = QtWidgets.QLabel("SETUP", self._step_indicator)
+        setup_label.setObjectName("setupLabel")
+        indicator_row.addWidget(setup_label)
+        indicator_row.addSpacing(8)
         self._step_buttons: list[QtWidgets.QPushButton] = []
         for index, name in enumerate(_STEP_SHORT_NAMES):
-            if index:
-                separator = QtWidgets.QLabel("›", self._step_indicator)
-                separator.setForegroundRole(
-                    QtGui.QPalette.ColorRole.PlaceholderText
-                )
-                indicator_row.addWidget(separator)
             button = QtWidgets.QPushButton(name, self._step_indicator)
-            button.setFlat(True)
+            button.setProperty("step", True)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
             button.setFocusPolicy(QtCore.Qt.FocusPolicy.NoFocus)
             button.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(
@@ -62,12 +67,14 @@ class SetupPaneMixin(WindowBase):
             self._step_buttons.append(button)
         indicator_row.addStretch(1)
         layout.addWidget(self._step_indicator)
+        layout.setAlignment(
+            self._step_indicator, QtCore.Qt.AlignmentFlag.AlignTop
+        )
 
-        rule = QtWidgets.QFrame(page)
-        rule.setFixedHeight(1)
-        rule.setStyleSheet("background-color: palette(mid);")
-        layout.addWidget(rule)
-
+        workspace = QtWidgets.QWidget(page)
+        workspace_layout = QtWidgets.QVBoxLayout(workspace)
+        workspace_layout.setContentsMargins(0, 0, 0, 0)
+        workspace_layout.setSpacing(14)
         self._account_pages = QtWidgets.QStackedWidget(page)
         for builder in (
             self._build_language_block, self._build_weather_block,
@@ -77,24 +84,15 @@ class SetupPaneMixin(WindowBase):
             page_layout = QtWidgets.QVBoxLayout(step_page)
             page_layout.setContentsMargins(0, 0, 0, 0)
             card = QtWidgets.QFrame(step_page)
-            card.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
-            card.setFrameShadow(QtWidgets.QFrame.Shadow.Plain)
-            card.setAutoFillBackground(True)
-            card_palette = card.palette()
-            card_palette.setColor(
-                QtGui.QPalette.ColorRole.Window,
-                card_palette.color(QtGui.QPalette.ColorRole.Base),
-            )
-            card.setPalette(card_palette)
+            card.setObjectName("setupCard")
             card_layout = QtWidgets.QVBoxLayout(card)
-            card_layout.setContentsMargins(22, 20, 22, 20)
-            card_layout.setSpacing(12)
+            card_layout.setContentsMargins(26, 24, 26, 24)
+            card_layout.setSpacing(14)
             card_layout.addWidget(builder(card))
             page_layout.addWidget(card)
             page_layout.addStretch(1)
             self._account_pages.addWidget(step_page)
-        layout.addWidget(self._account_pages)
-        layout.addStretch(1)
+        workspace_layout.addWidget(self._account_pages)
         navigation = QtWidgets.QHBoxLayout()
         self._setup_later = QtWidgets.QPushButton("Set up later", page)
         self._setup_later.setFlat(True)
@@ -106,19 +104,22 @@ class SetupPaneMixin(WindowBase):
             self._account_pages.currentIndex() - 1
         ))
         self._next_button = QtWidgets.QPushButton("Continue", page)
+        self._next_button.setObjectName("continueAction")
         self._next_button.setDefault(True)
         self._next_button.clicked.connect(self._continue_setup)
         navigation.addWidget(self._back_button)
         navigation.addSpacing(8)
         navigation.addWidget(self._next_button)
-        layout.addLayout(navigation)
+        workspace_layout.addLayout(navigation)
         self._advanced_toggle = QtWidgets.QCheckBox("Advanced settings", page)
-        layout.addWidget(self._advanced_toggle)
+        workspace_layout.addWidget(self._advanced_toggle)
         self._advanced_settings = QtWidgets.QWidget(page)
-        layout.addWidget(self._advanced_settings)
+        workspace_layout.addWidget(self._advanced_settings)
         self._advanced_toggle.toggled.connect(self._advanced_settings.setVisible)
         self._advanced_settings.hide()
         self._build_advanced_settings(self._advanced_settings)
+        workspace_layout.addStretch(1)
+        layout.addWidget(workspace, 1)
 
         self._show_step(0)
         return page
@@ -241,11 +242,23 @@ class SetupPaneMixin(WindowBase):
         self._contribute_button = QtWidgets.QPushButton(
             "Contribute on GitHub", box
         )
+        self._contribute_button.setObjectName("tertiaryLink")
+        self._contribute_button.setFlat(True)
+        self._contribute_button.setCursor(
+            QtCore.Qt.CursorShape.PointingHandCursor
+        )
+        self._contribute_button.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Maximum,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
         self._contribute_button.setToolTip(
             "Open the Strom repository and help add support for your country."
         )
         self._contribute_button.clicked.connect(self._open_contribution_page)
-        layout.addWidget(self._contribute_button)
+        layout.addWidget(
+            self._contribute_button,
+            alignment=QtCore.Qt.AlignmentFlag.AlignLeft,
+        )
         layout.addStretch(1)
         return box
 
@@ -487,6 +500,7 @@ class SetupPaneMixin(WindowBase):
     ) -> None:
         row = QtWidgets.QHBoxLayout()
         heading = QtWidgets.QLabel(title)
+        heading.setObjectName("sectionTitle")
         font = heading.font()
         font.setBold(True)
         heading.setFont(font)
@@ -580,7 +594,13 @@ class SetupPaneMixin(WindowBase):
             chip.setText(
                 self._translated(ready_text if done else missing_text)
             )
+            chip.setProperty("statusKind", "ready" if done else "missing")
+            repolish(chip)
         self._chip_plug.setText(self._translated(plug_text))
+        self._chip_plug.setProperty(
+            "statusKind", "ready" if status.tapo_saved else "missing"
+        )
+        repolish(self._chip_plug)
 
     def _sync_step_indicator(self) -> None:
         """Color the stepper: the current step stands out, done steps tick."""
@@ -603,17 +623,22 @@ class SetupPaneMixin(WindowBase):
             font = button.font()
             font.setBold(index == current)
             button.setFont(font)
-            button.setForegroundRole(
-                QtGui.QPalette.ColorRole.WindowText
-                if index == current
-                else QtGui.QPalette.ColorRole.PlaceholderText
-            )
+            button.setProperty("stepCurrent", index == current)
+            button.setProperty("stepComplete", complete and index != current)
+            repolish(button)
 
     def _set_chip(
         self, chip: QtWidgets.QLabel, text: str, *, error: bool = False
     ) -> None:
         chip.setText(text)
-        chip.setStyleSheet(f"color: {_ERROR_COLOR};" if error else "")
+        if error:
+            status_kind = "error"
+        elif text == self._translated("Saved"):
+            status_kind = "ready"
+        else:
+            status_kind = "missing"
+        chip.setProperty("statusKind", status_kind)
+        repolish(chip)
 
     def _setup_error_text(self, exc: SetupError) -> str:
         """Translate a setup validation message, including its values."""
