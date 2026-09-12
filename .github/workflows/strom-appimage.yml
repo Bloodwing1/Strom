@@ -185,14 +185,14 @@ jobs:
             echo "stay in the user configuration directory."
             echo
             echo "## Build provenance"
-            echo "```text"
+            echo '```text'
             cat stage/provenance.txt
-            echo "```"
+            echo '```'
             echo
             echo "## Verify the download"
-            echo "```sh"
+            echo '```sh'
             echo "sha256sum -c SHA256SUMS"
-            echo "```"
+            echo '```'
             if [ "$PRERELEASE" = "true" ]; then
               echo
               echo "**Pre-release**: this version is not final; expect changes."
