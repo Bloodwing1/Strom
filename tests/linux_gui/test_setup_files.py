@@ -11,6 +11,7 @@ import os
 import pytest
 
 from strom.linux_gui.setup_files import (
+    PLUG_CONFIG_KEY,
     PRICE_FILE,
     TAPO_FILE,
     WEATHER_FILE,
@@ -177,3 +178,33 @@ def test_ip_only_is_saved_but_not_verified(tmp_path):
     assert status.tapo_ip_saved
     assert not status.tapo_saved
     assert not status.tapo_verified
+
+
+def test_saved_account_credentials_are_preserved(tmp_path):
+    path = save_tapo_credentials(
+        tmp_path,
+        "192.168.1.9",
+        email="user@example.com",
+        password="secret",
+    )
+
+    assert _parse_env_content(path.read_text()) == {
+        "DEVICEIP": "192.168.1.9",
+        "EMAIL": "user@example.com",
+        "PASSWORD": "secret",
+    }
+
+
+def test_derived_proof_replaces_saved_account_credentials(tmp_path):
+    path = save_tapo_credentials(
+        tmp_path,
+        "192.168.1.9",
+        email="user@example.com",
+        password="secret",
+        plug_config=PLUG_CONFIG,
+    )
+
+    assert _parse_env_content(path.read_text()) == {
+        "DEVICEIP": "192.168.1.9",
+        PLUG_CONFIG_KEY: PLUG_CONFIG,
+    }

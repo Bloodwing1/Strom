@@ -330,6 +330,31 @@ def test_saving_the_plug_never_stores_the_password(make_window, tmp_path):
     assert "smart plug account" not in window._checklist_label.text()
 
 
+def test_saving_the_plug_preserves_stored_account_credentials(
+    make_window, tmp_path
+):
+    window = make_window()
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    (config_dir / "tapologin.env").write_text(
+        'DEVICEIP="192.168.1.7"\nEMAIL="old@example.com"\nPASSWORD="old-secret"\n'
+    )
+    window._config_dir_edit.setText(str(config_dir))
+    window._tapo_ip.setText("192.168.1.42")
+
+    window._tapo_save.click()
+
+    from strom.linux_gui.setup_files import read_tapo_credentials
+
+    stored = read_tapo_credentials(config_dir)
+    assert stored is not None
+    assert stored.device_ip == "192.168.1.42"
+    assert stored.email == "old@example.com"
+    assert stored.password == "old-secret"
+    # The account alone configures the plug, so the chip counts it as saved.
+    assert window._tapo_status.text() == "Saved"
+
+
 def test_save_tapo_rejects_bad_ip_without_writing(make_window, tmp_path):
     window = make_window()
     config_dir = tmp_path / "cfg"

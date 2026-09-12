@@ -177,13 +177,16 @@ def save_tapo_credentials(
     config_dir: Path,
     device_ip: str,
     *,
+    email: str = "",
+    password: str = "",
     plug_config: str = "",
 ) -> Path:
-    """Save the plug endpoint and, when available, the derived proof.
+    """Save the plug endpoint and whatever credentials it has.
 
     Only the address is required. A derived configuration captured by a
-    successful Test is stored beside it, so the TP-Link account password is
-    never written by the GUI.
+    successful Test is stored beside it and replaces any account
+    credentials; without one, a passed email/password pair is preserved so
+    saving the address cannot erase what an older file already had.
     """
     cleaned_ip = _non_blank(device_ip, "plug IP address")
     try:
@@ -195,10 +198,14 @@ def save_tapo_credentials(
             code="bad_ip",
             params={"value": cleaned_ip},
         ) from None
+    entries = [("DEVICEIP", cleaned_ip)]
     if plug_config:
-        entries = [("DEVICEIP", cleaned_ip), (PLUG_CONFIG_KEY, plug_config)]
+        entries.append((PLUG_CONFIG_KEY, plug_config))
     else:
-        entries = [("DEVICEIP", cleaned_ip)]
+        if email:
+            entries.append(("EMAIL", email))
+        if password:
+            entries.append(("PASSWORD", password))
     content = _render_tapo_env(entries)
     config_dir.mkdir(parents=True, exist_ok=True)
     path = config_dir / TAPO_FILE

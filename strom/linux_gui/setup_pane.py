@@ -768,11 +768,13 @@ class SetupPaneMixin(WindowBase):
         )
         # The account is verified by Test, never written: a successful Test
         # stores the derived proof and drops the password. Saving the
-        # address keeps any proof that is already there.
+        # address keeps the credentials already in the file.
         try:
             path = save_tapo_credentials(
                 config_dir,
                 device_ip,
+                email=(stored.email if stored else ""),
+                password=(stored.password if stored else ""),
                 plug_config=(stored.plug_config if stored else ""),
             )
         except SetupError as exc:
