@@ -32,44 +32,6 @@ from strom.linux_gui.window_base import WindowBase
 from strom.plug import PlugCredentials
 
 
-class _StepHost(QtWidgets.QWidget):
-    """Hosts one setup step at a time.
-
-    A QStackedWidget would reserve the height of its tallest step, leaving a
-    dead gap under short steps like the language card. Showing only the
-    active step lets the card area grow and shrink with its content.
-    """
-
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._pages: list[QtWidgets.QWidget] = []
-        self._index = 0
-        self._layout = QtWidgets.QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 0, 0, 0)
-
-    def addWidget(self, page: QtWidgets.QWidget) -> None:
-        self._layout.addWidget(page)
-        page.hide()
-        self._pages.append(page)
-
-    def count(self) -> int:
-        return len(self._pages)
-
-    def currentIndex(self) -> int:
-        return self._index
-
-    def widget(self, index: int) -> QtWidgets.QWidget:
-        return self._pages[index]
-
-    def currentWidget(self) -> QtWidgets.QWidget:
-        return self._pages[self._index]
-
-    def setCurrentIndex(self, index: int) -> None:
-        for position, page in enumerate(self._pages):
-            page.setVisible(position == index)
-        self._index = index
-
-
 class SetupPaneMixin(WindowBase):
     def _build_accounts_group(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget(parent)
@@ -105,7 +67,9 @@ class SetupPaneMixin(WindowBase):
         workspace_layout = QtWidgets.QVBoxLayout(workspace)
         workspace_layout.setContentsMargins(0, 0, 0, 0)
         workspace_layout.setSpacing(14)
-        self._account_pages = _StepHost(page)
+        # Steps share one area sized to the tallest step, so the navigation
+        # buttons stay in place when the active step changes.
+        self._account_pages = QtWidgets.QStackedWidget(page)
         for builder in (
             self._build_language_block, self._build_weather_block,
             self._build_price_block, self._build_tapo_block
@@ -167,6 +131,7 @@ class SetupPaneMixin(WindowBase):
         self._next_button.setText(
             self._translated("Finish setup" if index == 3 else "Continue")
         )
+        self._reserve_next_button_width()
         self._advanced_toggle.setVisible(index > 0)
         self._advanced_settings.setVisible(
             index > 0 and self._advanced_toggle.isChecked()
@@ -180,6 +145,16 @@ class SetupPaneMixin(WindowBase):
         fields[index].setFocus()
         self._sync_intro_visibility()
         self._sync_step_indicator()
+
+    def _reserve_next_button_width(self) -> None:
+        """Reserve room for the longer label so the row never shifts."""
+        shown = self._next_button.text()
+        width = 0
+        for label in ("Continue", "Finish setup"):
+            self._next_button.setText(self._translated(label))
+            width = max(width, self._next_button.sizeHint().width())
+        self._next_button.setText(shown)
+        self._next_button.setMinimumWidth(width)
 
     def _sync_intro_visibility(self) -> None:
         """The intro paragraph is only useful before the language step."""

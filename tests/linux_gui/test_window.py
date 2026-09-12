@@ -1057,6 +1057,30 @@ def test_wizard_keeps_unsaved_replacement_on_save_failure(make_window, tmp_path)
     assert (tmp_path / "accounts" / "weather_api_key.txt").read_text() == "original\n"
 
 
+def test_step_switching_keeps_the_navigation_still(qtbot, make_window, tmp_path):
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path / "accounts"))
+    window.show()
+    window._open_setup()
+    qtbot.wait(10)
+
+    layouts = set()
+    for index in range(window._account_pages.count()):
+        window._show_step(index)
+        qtbot.wait(10)
+        layouts.add((
+            window._account_pages.x(),
+            window._account_pages.y(),
+            window._account_pages.height(),
+            window._back_button.y(),
+            window._next_button.y(),
+            window._next_button.width(),
+            window._setup_later.y(),
+        ))
+
+    assert len(layouts) == 1
+
+
 def test_language_first_step_and_spain_note(make_window, settings):
     window = make_window()
     assert window._account_pages.currentIndex() == 0

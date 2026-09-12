@@ -167,6 +167,10 @@ class MainWindow(
         self._intro_label = QtWidgets.QLabel(_INTRO_TEXT, column)
         self._intro_label.setObjectName("introText")
         self._intro_label.setWordWrap(True)
+        # Hiding the tagline on later steps must not move the page below it.
+        intro_policy = self._intro_label.sizePolicy()
+        intro_policy.setRetainSizeWhenHidden(True)
+        self._intro_label.setSizePolicy(intro_policy)
         body.addWidget(self._intro_label)
 
         self._pages = QtWidgets.QStackedWidget(column)
