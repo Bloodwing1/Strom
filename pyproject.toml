@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "strom"
-version = "0.3.5"
+version = "0.3.6"
 description = "Smart heating: cost-optimal control against weather forecasts and day-ahead electricity prices"
 readme = "README.md"
 authors = [{ name = "Strom contributors" }]
