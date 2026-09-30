@@ -249,13 +249,13 @@ def _resample_to_freq(df: pd.DataFrame, freq: str) -> pd.DataFrame:
       case studies' ``15min`` grids): exterior temperature is time-
       interpolated and prices are forward-filled, i.e. treated as the step
       function market intervals actually are.
-    * Otherwise no filling happens: missing values are source gaps and are
-      rejected with an actionable error. Rows before the first / after the
-      last observation (bucket-alignment artifacts) are trimmed.
+    * Coarser intervals use the mean of their source samples. Equal-frequency
+      inputs retain their values. Empty intervals remain gaps and are rejected.
     """
     src_step = df.index.to_series().diff().dropna().median()
     upsampling = src_step > pd.to_timedelta(freq)
-    out = df.resample(freq).asfreq()
+    resampler = df.resample(freq, origin=df.index[0])
+    out = resampler.asfreq() if upsampling else resampler.mean(numeric_only=True)
 
     valid = out[list(REQUIRED_COLUMNS)].notna().any(axis=1)
     out = out.loc[valid.idxmax():valid.iloc[::-1].idxmax()]
@@ -319,7 +319,7 @@ def _check_solution(values: dict, house: House, Ad: np.ndarray,
             f"Cooling output violates [0, 1] bounds: range "
             f"[{c.min():.6f}, {c.max():.6f}]."
         )
-    interior = X[0, :]
+    interior = X[0, 1:]
     if (interior < house.T_min - TEMPERATURE_TOL).any() or (
             interior > house.T_max + TEMPERATURE_TOL).any():
         raise SolverError(
@@ -370,6 +370,11 @@ def find_heating_output(temp_price_df: pd.DataFrame,
 
     dt = house.dt_hours
     state_df = _resample_to_freq(state_df, house.freq)
+    if len(state_df) < 2:
+        raise InvalidInputError(
+            "Need at least two control intervals after resampling; "
+            "increase the horizon or shorten the control frequency."
+        )
     if state_df.loc[:, list(REQUIRED_COLUMNS)].isna().values.any():
         gaps = state_df.loc[
             state_df[REQUIRED_COLUMNS[0]].isna()
@@ -409,8 +414,8 @@ def find_heating_output(temp_price_df: pd.DataFrame,
             + Bd[:, 2] * T_exterior[t]
         )
 
-    constraints.append(T[0, :] >= house.T_min)
-    constraints.append(T[0, :] <= house.T_max)
+    constraints.append(T[0, 1:] >= house.T_min)
+    constraints.append(T[0, 1:] <= house.T_max)
 
     # Cost definition shared by the objective and the returned 'Cost' column.
     obj_cost = cp.sum(cp.multiply(

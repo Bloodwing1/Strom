@@ -1635,6 +1635,54 @@ def test_plug_test_without_ip_asks_for_one(qtbot, make_window, tmp_path, monkeyp
     assert window._tapo_status.text() == "Enter the plug IP address first."
 
 
+@pytest.mark.parametrize("changed", ["folder", "ip", "account"])
+def test_plug_test_cannot_save_a_stale_result(make_window, tmp_path, monkeypatch, changed):
+    window = make_window()
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    sentinel = second / "tapologin.env"
+    sentinel.write_text("DEVICEIP=192.168.1.10\nPLUG_CONFIG=existing\n")
+    original = sentinel.read_bytes()
+    window._config_dir_edit.setText(str(first))
+    window._tapo_ip.setText("192.168.1.9")
+    requests = []
+    monkeypatch.setattr(window._checker, "check_plug", requests.append)
+    window._on_test_tapo()
+    if changed == "folder":
+        window._config_dir_edit.setText(str(second))
+    elif changed == "ip":
+        window._tapo_ip.setText("192.168.1.10")
+    else:
+        window._tapo_email.setText("different@example.com")
+    window._refresh_setup_status()
+    assert not window._tapo_test.isEnabled()
+    window._on_test_tapo()
+    assert len(requests) == 1
+    window._on_plug_checked(True, "", '{"host":"192.168.1.9","credentials_hash":"abc"}')
+    assert not (first / "tapologin.env").exists()
+    assert sentinel.read_bytes() == original
+    assert window._tested_plug is None
+    assert window._tapo_test.isEnabled()
+
+
+def test_tray_quit_respects_installation_guard(make_window, monkeypatch):
+    from strom.linux_gui.update_service import UpdateState
+
+    window = make_window()
+    window.show()
+    window._updater._state = UpdateState.Installing
+    refusals = []
+    quit_calls = []
+    monkeypatch.setattr(window, "_explain_update_refusal", refusals.append)
+    monkeypatch.setattr(QtWidgets.QApplication, "quit", lambda: quit_calls.append(True))
+    window._quit_requested()
+    assert window.isVisible()
+    assert len(refusals) == 1
+    assert not quit_calls
+    window._updater._state = UpdateState.Idle
+
+
 def test_main_close_closes_an_open_modal_dialog(qtbot, make_window):
     window = make_window()
     window.show()

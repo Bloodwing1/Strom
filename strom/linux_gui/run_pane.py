@@ -348,7 +348,7 @@ class RunPaneMixin(WindowBase):
         self._elapsed_timer.stop()
         self._run_started = None
         if self._quit_after_run:
-            QtWidgets.QApplication.quit()
+            self.close()
             return
         summary = ""
         report = self._read_report()

@@ -807,6 +807,41 @@ def test_selftest_failure_rolls_back_and_reopens_controls(
     assert saved == []
 
 
+def test_failed_downloads_and_installations_can_be_retried(
+    qtbot, fake_service, tmp_path, monkeypatch,
+):
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    release = _release(fake_service.base, b"x")
+    coordinator, blocks, _, _ = _coordinator(qtbot, tmp_path, target, FAILING_SELFTEST)
+
+    def failed_download(*args):
+        coordinator._service.downloadFailed.emit("network unavailable")
+        return False
+
+    monkeypatch.setattr(coordinator._service, "download", failed_download)
+    for _ in range(2):
+        assert coordinator.accept_install(release) is False
+        assert coordinator.state is UpdateState.Failed
+        assert blocks[-2:] == [True, False]
+    for attempt in range(2):
+        staging = tmp_path / f".Strom.AppImage.staging-retry{attempt}"
+        staging.write_text(FAILING_SELFTEST)
+        staging.chmod(0o755)
+        coordinator._prepared = PreparedUpdate(
+            release=release, staging=staging, size=staging.stat().st_size,
+            sha256=update_install.file_sha256(staging),
+        )
+        with qtbot.waitSignal(coordinator.installFinished, timeout=30_000):
+            assert coordinator.accept_install(release)
+        assert coordinator.state is UpdateState.Failed
+        assert "self-test" in coordinator.message
+        assert blocks[-2:] == [True, False]
+        assert coordinator._lock is not None
+        assert not coordinator._lock.is_held()
+        assert not list(tmp_path.glob(".Strom.AppImage.backup-*"))
+
+
 def test_candidate_exit_without_ack_restores_previous_version(
     qtbot, fake_service, tmp_path, monkeypatch
 ):
@@ -821,6 +856,18 @@ def test_candidate_exit_without_ack_restores_previous_version(
     os.chmod(staging, 0o755)
     release = _release(fake_service.base, b"x")
     coordinator, blocks, saved, closed = _coordinator(qtbot, tmp_path, target, CRASHING_CANDIDATE)
+    original_restore = update_install.restore_previous
+    rollback_checks = []
+
+    def checked_restore(identity, backup):
+        assert blocks[-1] is True
+        assert coordinator._lock.is_held()
+        contender = update_install.FileLock(update_install.update_lock_path(target))
+        assert not contender.acquire(exclusive=True)
+        original_restore(identity, backup)
+        rollback_checks.append(True)
+
+    monkeypatch.setattr(update_install, "restore_previous", checked_restore)
     coordinator._prepared = PreparedUpdate(
         release=release, staging=staging, size=staging.stat().st_size,
         sha256=update_install.file_sha256(staging),
@@ -832,6 +879,10 @@ def test_candidate_exit_without_ack_restores_previous_version(
     assert target.read_bytes() == b"old"
     assert blocks == [True, False]
     assert saved == []
+    assert rollback_checks == [True]
+    contender = update_install.FileLock(update_install.update_lock_path(target))
+    assert contender.acquire(exclusive=True)
+    contender.release()
 
 
 def test_detached_launch_keeps_the_replacement_alive(qtbot, tmp_path):

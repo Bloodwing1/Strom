@@ -21,6 +21,7 @@ environment via dotenv.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6 import QtCore, QtWidgets
@@ -113,6 +114,8 @@ class MainWindow(
         self._run_started: float | None = None
         self._cycle_seen_active = False
         self._tested_plug: PlugCredentials | None = None
+        self._tested_plug_dir: Path | None = None
+        self._tested_plug_fields: tuple[str, ...] | None = None
         self._checker = SetupChecker(self)
         self._checker.weatherChecked.connect(self._on_weather_checked)
         self._checker.priceChecked.connect(self._on_price_checked)
@@ -421,6 +424,7 @@ class MainWindow(
             self._log_level,
         ):
             widget.setEnabled(allow)
+        self._tapo_test.setEnabled(allow and self._tested_plug is None)
         self._run_button.setEnabled(allow and setup_ready)
         self._run_button.setToolTip(
             "" if setup_ready else self._translated("Finish setup to start heating.")

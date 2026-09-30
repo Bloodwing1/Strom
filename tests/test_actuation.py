@@ -193,3 +193,26 @@ class TestMaxOnWatchdog:
         watchdog.start()
         await watchdog.stop()
         assert watchdog._task is None
+
+    async def test_failed_off_is_retried_on_the_next_poll(self, plug, clock):
+        attempts = 0
+        original_off = plug.turn_off
+
+        async def flaky_off():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise ConnectionError("temporary outage")
+            await original_off()
+
+        plug.turn_off = flaky_off
+        plug.is_on = True
+        watchdog = MaxOnWatchdog(plug, max_on_seconds=10, clock=clock, poll_seconds=10)
+        watchdog.notify_on()
+        watchdog.start()
+        try:
+            await self._poll(clock, 6)
+            assert attempts == 2
+            assert plug.is_on is False
+        finally:
+            await watchdog.stop()

@@ -183,13 +183,18 @@ async def execute_plan(
     plug,
     plan: ActuationPlan,
     clock: Clock,
+    watchdog: MaxOnWatchdog | None = None,
 ) -> None:
     """Execute a plan by switching the plug and sleeping between segments."""
     for segment in plan.segments:
         if segment.on:
+            if watchdog is not None:
+                watchdog.notify_on()
             await plug.turn_on()
         else:
             await plug.turn_off()
+            if watchdog is not None:
+                watchdog.notify_off()
         await clock.sleep(segment.seconds)
 
 
@@ -269,4 +274,3 @@ class MaxOnWatchdog:
                 raise
             except Exception:  # defensive: the watchdog must never die silently
                 logger.exception("Max-on watchdog iteration failed; continuing.")
-                self._on_since = None

@@ -31,6 +31,8 @@ class WindowBase(QtWidgets.QMainWindow):
     _repeat_timer: QtCore.QTimer
     _elapsed_timer: QtCore.QTimer
     _tested_plug: PlugCredentials | None
+    _tested_plug_dir: Path | None
+    _tested_plug_fields: tuple[str, ...] | None
     _run_blocked_by_update: bool
     _quit_after_run: bool
     _finish_note: str

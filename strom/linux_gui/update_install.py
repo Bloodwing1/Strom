@@ -147,6 +147,10 @@ def write_journal(target: Path, payload: dict[str, object]) -> None:
             raise TransactionError(
                 f"could not write the update journal: {save.errorString()}"
             )
+        try:
+            fsync_directory(target.parent)
+        except OSError as exc:
+            raise TransactionError(f"could not flush the update journal: {exc}") from exc
     finally:
         del save
 
@@ -178,10 +182,6 @@ def load_journal(target: Path) -> dict[str, object] | None:
         info = os.stat(target)
     except OSError as exc:
         raise TransactionError(f"the recorded AppImage is unreadable: {exc}") from exc
-    if recorded.get("device") != info.st_dev or recorded.get("inode") != info.st_ino:
-        raise TransactionError(
-            "the update journal does not describe the current AppImage file"
-        )
     backup = payload.get("backup")
     if not isinstance(backup, dict) or not isinstance(backup.get("path"), str):
         raise TransactionError("the update journal has no usable backup record")
@@ -195,6 +195,21 @@ def load_journal(target: Path) -> dict[str, object] | None:
             raise TransactionError(
                 "the update journal staging path is not updater-owned"
             )
+    if recorded.get("device") != info.st_dev or recorded.get("inode") != info.st_ino:
+        # A crash after rename can leave the durable journal at "staged".
+        staging = payload.get("staging")
+        if not (
+            state == "staged" and isinstance(staging, dict)
+            and staging.get("device") == info.st_dev
+            and staging.get("inode") == info.st_ino
+            and staging.get("size") == info.st_size
+            and staging.get("sha256") == file_sha256(target)
+        ):
+            raise TransactionError(
+                "the update journal does not describe the current AppImage file"
+            )
+        payload["state"] = "replaced"
+        payload["target"] = _fresh_identity(target)
     return payload
 
 
@@ -232,7 +247,8 @@ def prepare_transaction(
             "The AppImage at the recorded location has changed; refusing to "
             "replace it."
         )
-    if staging.stat().st_size != staging_size:
+    staging_info = staging.stat()
+    if staging_info.st_size != staging_size:
         raise TransactionError("the downloaded update changed since verification")
     if file_sha256(staging) != staging_sha256:
         raise TransactionError("the downloaded update no longer matches its checksum")
@@ -259,6 +275,8 @@ def prepare_transaction(
                     "path": str(staging),
                     "size": staging_size,
                     "sha256": staging_sha256,
+                    "device": staging_info.st_dev,
+                    "inode": staging_info.st_ino,
                 },
                 "release": {"version": str(release.version), "tag": release.tag},
                 "pid": os.getpid(),
@@ -284,11 +302,10 @@ def commit_replacement(target: AppImageIdentity, staging: Path, backup: Path) ->
     identity of the file that is now at the target path (re-read here), so
     the replacement instance's own recovery validation succeeds.
     """
+    os.chmod(staging, 0o755)
     with staging.open("rb") as handle:
         os.fsync(handle.fileno())
     os.replace(staging, target.path)
-    # The replacement must be launchable immediately, as an AppImage is.
-    os.chmod(target.path, 0o755)
     fsync_directory(target.path.parent)
     fresh = _fresh_identity(target.path)
     write_journal(
@@ -335,8 +352,11 @@ def restore_previous(target: AppImageIdentity, backup: Path) -> None:
         raise TransactionError(
             f"the backup of the previous version is missing: {backup}"
         )
-    os.replace(backup, target.path)
-    fsync_directory(target.path.parent)
+    try:
+        os.replace(backup, target.path)
+        fsync_directory(target.path.parent)
+    except OSError as exc:
+        raise TransactionError(f"could not restore the previous AppImage: {exc}") from exc
 
 
 def clear_journal(target: AppImageIdentity | None) -> None:

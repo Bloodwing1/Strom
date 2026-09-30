@@ -8,12 +8,11 @@ DST transitions.
 
 Weather and prices are normalized **independently**:
 
-* weather: bounded linear (time) interpolation only — every filled point is
+* weather: time interpolation and bounded edge holds. Every filled point is
   within ``weather_max_gap`` of a real observation;
-* prices: exact market-interval alignment plus bounded forward-fill. Prices
-  are never interpolated (cubic or otherwise) and never stretched across
-  neighbouring market intervals; intervals without a published price raise
-  :class:`~strom.errors.CoverageError` once the fill tolerance is exceeded.
+* prices: published step prices with bounded forward-fill. Control-interval
+  costs integrate the market intervals they cover; missing publication
+  beyond the fill tolerance raises :class:`~strom.errors.CoverageError`.
 
 Input data is never mutated in place.
 """
@@ -54,37 +53,25 @@ def _to_utc(series: pd.Series, name: str) -> pd.Series:
     return out.sort_index()
 
 
-def _infer_step(index: pd.DatetimeIndex) -> pd.Timedelta:
-    """Median step of a regular target index; zero for a single point."""
-    diffs = index.to_series().diff().dropna()
-    if diffs.empty:
-        return pd.Timedelta(0)
-    step = diffs.median()
-    if pd.isna(step) or step <= pd.Timedelta(0):
-        raise ValueError("Target index steps must be positive.")
-    return step
-
-
 def align_weather(weather: pd.Series,
                   target_index: pd.DatetimeIndex,
                   max_gap: pd.Timedelta = pd.Timedelta(hours=3)) -> pd.Series:
     """Place weather observations on ``target_index`` (UTC).
 
-    Missing points are linearly interpolated in time, bounded so that no
-    point is more than ``max_gap`` away from a real observation. Any
-    uncovered interval (interior gaps beyond the bound, or horizons the
-    observations do not span) raises :class:`CoverageError` instead of
-    inventing weather.
+    Interpolate between observations and hold the nearest observation at
+    either edge. Every filled point must be within ``max_gap`` of a real
+    observation; more distant intervals raise :class:`CoverageError`.
     """
     source = _to_utc(weather, "weather")
-    step = _infer_step(target_index)
-    # A gap of n missing points leaves the farthest interpolated point
-    # floor((n + 1) / 2) steps from a real observation, so n may be at
-    # most 2 * floor(max_gap / step). A single-point target has no step to
-    # divide by; at most one plain fill is meaningful there.
-    limit = max(1, 2 * int(max_gap / step)) if step > pd.Timedelta(0) else 1
-    out = source.reindex(target_index)
-    out = out.interpolate(method="time", limit=limit, limit_area="inside")
+    observations = source.dropna()
+    combined = observations.index.union(target_index).sort_values()
+    out = observations.reindex(combined).interpolate(
+        method="time", limit_direction="both"
+    ).reindex(target_index)
+    nearest = observations.index.get_indexer(target_index, method="nearest")
+    if len(observations):
+        distance = abs(target_index - observations.index[nearest])
+        out = out.where(distance <= max_gap)
     missing = out.index[out.isna()]
     if len(missing):
         raise CoverageError(
@@ -106,11 +93,8 @@ def align_prices(prices: pd.Series,
     (i.e. the previous market interval is reused briefly, never averaged or
     interpolated). Longer outages raise :class:`CoverageError`.
     """
-    source = _to_utc(prices, "price")
-    step = _infer_step(target_index)
-    limit = max(1, int(max_fill / step)) if step > pd.Timedelta(0) else 1
-    out = source.reindex(target_index)
-    out = out.ffill(limit=limit)
+    source = _to_utc(prices, "price").dropna()
+    out = source.reindex(target_index, method="ffill", tolerance=max_fill)
     missing = out.index[out.isna()]
     if len(missing):
         raise CoverageError(
@@ -121,6 +105,23 @@ def align_prices(prices: pd.Series,
         )
     out.name = prices.name
     return out
+
+
+def interval_price(
+    prices: pd.Series, start: pd.Timestamp, seconds: float,
+    max_fill: pd.Timedelta = pd.Timedelta(hours=1),
+) -> float:
+    """Time-weighted published price over a physical control interval."""
+    if not 0 < seconds < float("inf"):
+        raise ValueError("The price interval must be finite and positive.")
+    end = start + pd.Timedelta(seconds=seconds)
+    boundaries = prices.index[(prices.index > start) & (prices.index < end)]
+    boundaries = pd.DatetimeIndex([start, *boundaries, end])
+    values = align_prices(prices, boundaries[:-1], max_fill)
+    # Validate the end of every market span, including gaps inside the interval.
+    align_prices(prices, boundaries[1:] - pd.Timedelta(nanoseconds=1), max_fill)
+    durations = (boundaries[1:] - boundaries[:-1]).total_seconds().to_numpy()
+    return float((values.to_numpy() * durations).sum() / seconds)
 
 
 def _align_pair(temp_series: pd.Series,
@@ -169,30 +170,40 @@ def get_temp_price_df(
     price_api_key: str | None = None,
     weather_max_gap: pd.Timedelta = pd.Timedelta(hours=3),
     price_max_fill: pd.Timedelta = pd.Timedelta(hours=1),
+    freq: str = "1h",
 ) -> pd.DataFrame:
     """Fetch (or accept injected) weather and prices for the control horizon.
 
-    The horizon is the next ``horizon_hours`` whole-hour UTC intervals after
-    the current hour. Both sources are validated for coverage; incomplete
-    horizons raise instead of being filled from distant observations. API
-    keys are passed through to the providers when the series are fetched;
-    injected series never need them.
+    The first interval begins now, at the configured control frequency.
+    Weather and market intervals are validated over the requested horizon.
     """
     if horizon_hours < 1:
         raise ValueError(
             f"horizon_hours must be >= 1, got {horizon_hours!r}."
         )
-    now = now or pd.Timestamp.now(tz=CANONICAL_TZ)
-    start = now.floor("h") + pd.Timedelta(hours=1)
-    target = pd.date_range(start, periods=horizon_hours, freq="1h",
-                           tz=CANONICAL_TZ)
-
+    requested_now = now
+    now = now if now is not None else pd.Timestamp.now(tz=CANONICAL_TZ)
+    step = pd.to_timedelta(freq)
+    if pd.isna(step) or step <= pd.Timedelta(0):
+        raise ValueError("The control frequency must be positive.")
+    periods = int(pd.Timedelta(hours=horizon_hours) / step)
+    if periods < 1 or (periods < 2 and horizon_hours > 1):
+        raise CoverageError("The horizon must contain at least two control intervals.")
     if weather is None:
         weather = get_weather_data(city=city, api_key=weather_api_key)
     if prices is None:
-        prices = get_price_series(zone=zone, end=target[-1],
+        prices = get_price_series(zone=zone, start=now.floor("h") - pd.Timedelta(hours=1),
+                                  end=now + pd.Timedelta(hours=horizon_hours) + step,
                                   api_key=price_api_key)
-
-    df = _align_pair(weather, prices, target, weather_max_gap, price_max_fill)
+    start = requested_now if requested_now is not None else pd.Timestamp.now(tz=CANONICAL_TZ)
+    target = pd.date_range(start, periods=periods, freq=freq, tz=CANONICAL_TZ)
+    market = _to_utc(prices, "price")
+    aligned_weather = align_weather(weather, target, weather_max_gap)
+    aligned_price = pd.Series(
+        [interval_price(market, stamp, step.total_seconds(), price_max_fill) for stamp in target],
+        index=target, name=PRICE_COLUMN,
+    )
+    df = pd.concat([aligned_weather.rename(TEMPERATURE_COLUMN), aligned_price], axis=1)
     df.index.name = "Timestamp"
+    df.attrs["market_prices"] = market
     return df

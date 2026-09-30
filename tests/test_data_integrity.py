@@ -17,6 +17,7 @@ from strom.data_utils import (
     align_prices,
     align_weather,
     get_temp_price_df,
+    interval_price,
     join_data,
 )
 from strom.errors import CoverageError
@@ -75,6 +76,39 @@ class TestUtcCanonical:
 
 
 class TestPriceIntegrity:
+    def test_averaging_cannot_hide_an_outage_inside_an_interval(self):
+        index = utc_range("2025-01-01", 4)
+        prices = pd.Series([.1, .3, .4], index=index[[0, 2, 3]])
+        with pytest.raises(CoverageError):
+            interval_price(prices, index[0], 4 * 3600)
+
+    def test_control_starts_now_and_costs_include_crossed_market_intervals(self):
+        now = pd.Timestamp("2025-01-01 12:20", tz="UTC")
+        index = utc_range("2025-01-01 12:00", 4)
+        result = get_temp_price_df(
+            weather_series(index),
+            pd.Series([.1, .2, .3, .4], index=index),
+            now=now, horizon_hours=2,
+        )
+        assert result.index[0] == now
+        assert result.Price.tolist() == pytest.approx([
+            (.1 * 40 + .2 * 20) / 60, (.2 * 40 + .3 * 20) / 60,
+        ])
+
+    def test_fifteen_minute_prices_reach_the_fifteen_minute_optimizer(self):
+        from strom.optimization_utils import House, find_heating_output
+
+        now = pd.Timestamp("2025-01-01 12:00", tz="UTC")
+        index = pd.date_range(now, periods=8, freq="15min")
+        result = get_temp_price_df(
+            weather_series(index, temp=18.),
+            pd.Series([.1, .2, .3, .4] * 2, index=index),
+            now=now, horizon_hours=2, freq="15min",
+        )
+        schedule = find_heating_output(result, House(freq="15min"), "optimal")
+        assert schedule.Price.tolist() == pytest.approx([.11, .21, .31, .41] * 2)
+        assert schedule.index[0] == now
+
     def test_exact_interval_alignment_no_interpolation(self):
         index = utc_range("2025-01-01", 4)
         prices = pd.Series([0.10, 0.20, 0.30, 0.40], index=index,
@@ -136,6 +170,29 @@ class TestPriceIntegrity:
 
 
 class TestWeatherIntegrity:
+    @pytest.mark.parametrize("hour", [2, 3, 4])
+    def test_full_forecast_covers_all_default_horizon_phases(self, hour):
+        observations = pd.date_range("2025-01-01", periods=40, freq="3h", tz="UTC")
+        weather = weather_series(observations)
+        prices = price_series(utc_range("2025-01-01", 120))
+        now = pd.Timestamp(f"2025-01-01 {hour:02d}:20", tz="UTC")
+        result = get_temp_price_df(weather, prices, now=now)
+        assert len(result) == 24
+        assert result[TEMPERATURE_COLUMN].eq(10).all()
+
+    def test_forecast_beginning_after_the_target_is_bounded(self):
+        observations = pd.date_range("2025-01-01 03:00", periods=4, freq="3h", tz="UTC")
+        result = align_weather(weather_series(observations), utc_range("2025-01-01 01:00", 6))
+        assert result.eq(10).all()
+        with pytest.raises(CoverageError):
+            align_weather(weather_series(observations), utc_range("2024-12-31 23:00", 6))
+
+    def test_non_grid_observations_remain_interpolation_anchors(self):
+        observations = pd.date_range("2025-01-01 00:30", periods=2, freq="3h", tz="UTC")
+        source = pd.Series([10., 16.], index=observations)
+        result = align_weather(source, utc_range("2025-01-01 01:00", 3))
+        assert result.tolist() == pytest.approx([11., 13., 15.])
+
     def test_bounded_linear_interpolation(self):
         obs = pd.date_range("2025-01-01", periods=3, freq="2h", tz="UTC")
         temp = pd.Series([10.0, 14.0, 18.0], index=obs,
@@ -210,7 +267,7 @@ class TestJoinAndHorizon:
         df = get_temp_price_df(weather=weather, prices=prices, now=now,
                                horizon_hours=24)
         assert len(df) == 24
-        assert df.index[0] == pd.Timestamp("2025-01-01 14:00", tz="UTC")
+        assert df.index[0] == now
         assert str(df.index.tz) == "UTC"
         assert not df.isna().values.any()
 
@@ -228,7 +285,7 @@ class TestJoinAndHorizon:
         df = get_temp_price_df(weather=weather, prices=prices, now=now,
                                horizon_hours=1)
         assert len(df) == 1
-        assert df.index[0] == pd.Timestamp("2025-01-01 14:00", tz="UTC")
+        assert df.index[0] == now
 
     def test_non_positive_horizon_rejected(self):
         with pytest.raises(ValueError, match="horizon_hours"):

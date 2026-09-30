@@ -74,6 +74,11 @@ class TestHouseValidation:
 
 
 class TestInputValidation:
+    def test_resampling_cannot_remove_all_temperature_transitions(self):
+        with pytest.raises(InvalidInputError, match="at least two"):
+            find_heating_output(make_input(hours=2, exterior=5.), House(freq="2h"),
+                                "optimal")
+
     def test_empty_input_rejected(self):
         with pytest.raises(InvalidInputError, match="at least two"):
             find_heating_output(make_input(hours=0), default_house(),

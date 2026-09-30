@@ -178,10 +178,13 @@ class TestAppConfig:
         app = load_app_config(str(config))
         assert app.credentials.device_ip == "192.168.1.42"
 
-    def test_controller_deps_pass_the_loaded_api_keys(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("freq", ["1h", "15min"])
+    def test_controller_deps_pass_the_loaded_api_keys(self, tmp_path, monkeypatch, freq):
         from strom.cli import build_controller_deps
 
-        app = load_app_config(str(make_config_dir(tmp_path)))
+        config_dir = make_config_dir(tmp_path)
+        (config_dir / "house_config.json").write_text('{"freq": "' + freq + '"}')
+        app = load_app_config(str(config_dir))
         import strom.data_utils as data_utils
 
         captured: dict = {}
@@ -190,12 +193,16 @@ class TestAppConfig:
             captured.update(kwargs)
 
         monkeypatch.setattr(data_utils, "get_temp_price_df", fake_get_temp_price_df)
-        build_controller_deps(app, 24, "Madrid, ES").fetch_data()
+        deps = build_controller_deps(app, 24, "Madrid, ES")
+        deps.fetch_data()
+        assert deps.interval_seconds == app.house.dt_hours * 3600
+        assert deps.state_path == config_dir / "thermal_state.json"
         assert captured == {
             "horizon_hours": 24,
             "city": "Madrid, ES",
             "weather_api_key": "weather-key",
             "price_api_key": "price-key",
+            "freq": app.house.freq,
         }
 
 

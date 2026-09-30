@@ -51,5 +51,4 @@ class TrayMixin(WindowBase):
                     5000,
                 )
             return
-        self.save_settings()
-        QtWidgets.QApplication.quit()
+        self.close()

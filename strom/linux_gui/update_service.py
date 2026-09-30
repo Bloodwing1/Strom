@@ -32,7 +32,7 @@ import tempfile
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -573,6 +573,7 @@ class UpdateService(QObject):
             return
         self._staging_path = None
         self._hasher = None
+        self._watchdog.stop()
         prepared = PreparedUpdate(
             release=self._release,
             staging=staging,
@@ -865,6 +866,9 @@ class UpdateCoordinator(QObject):
                 "after it finishes."
             )
             return False
+        self._settled = False
+        self._transaction = None
+        self._restore_after_stop = None
         self._hooks.set_run_block(True)
         if self._prepared is not None and self._prepared.release == release:
             self._begin_install()
@@ -1395,14 +1399,16 @@ class UpdateCoordinator(QObject):
 
     def _finish_failed(self, restore: bool, detail: str) -> None:
         self._settled = True
-        self._phase = None
         self._ack_timer.stop()
         self._selftest_timer.stop()
         self._retry_timer.stop()
         server, self._ack_server = self._ack_server, None
         if server is not None:
             server.close()
-        lock, self._lock = self._lock, None
+        template, context = self._compose_failure_message(restore, detail)
+        self._transaction = None
+        self._phase = None
+        lock = self._lock
         if lock is not None:
             try:
                 lock.release()
@@ -1410,7 +1416,6 @@ class UpdateCoordinator(QObject):
                 pass
         self._hooks.set_run_block(False)
         self._set_state(UpdateState.Failed)
-        template, context = self._compose_failure_message(restore, detail)
         self._set_message(template, **context)
         self.installFinished.emit(False, self._message)
 
@@ -1424,7 +1429,13 @@ class UpdateCoordinator(QObject):
             try:
                 update_install.restore_previous(target, transaction.backup)
                 update_install.clear_journal(target)
-            except update_install.TransactionError as exc:
+                info = target.path.stat()
+                self._target = replace(target, device=info.st_dev, inode=info.st_ino)
+                self._status = replace(self._status, identity=self._target)
+                if self._prepared is not None:
+                    update_install.discard_transaction(None, self._prepared.staging, None)
+                self._prepared = None
+            except (update_install.TransactionError, OSError) as exc:
                 self._updates_refused = str(exc)
                 return (
                     "The update could not be restored automatically; your "
@@ -1444,8 +1455,13 @@ class UpdateCoordinator(QObject):
         prepared = self._prepared
         if prepared is not None:
             try:
-                update_install.discard_transaction(target, prepared.staging, None)
-            except update_install.TransactionError:
-                pass
+                update_install.discard_transaction(
+                    target if transaction is not None else None,
+                    prepared.staging,
+                    transaction.backup if transaction is not None else None,
+                )
+            except (update_install.TransactionError, OSError) as exc:
+                self._updates_refused = str(exc)
+                detail = f"{detail}\n{exc}"
             self._prepared = None
         return ("The update was not installed. {detail}", {"detail": detail})

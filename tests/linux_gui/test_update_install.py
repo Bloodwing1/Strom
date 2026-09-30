@@ -115,6 +115,43 @@ def test_load_journal_rejects_foreign_target_records(tmp_path):
 # --- prepare / commit / rollback on real temporary AppImages ---
 
 
+def test_recovery_after_rename_before_replaced_journal(tmp_path, monkeypatch):
+    target = _fake_appimage(tmp_path / "Strom.AppImage")
+    identity = _identity(target)
+    staging = _fake_appimage(tmp_path / ".Strom.AppImage.staging-crash", tag="new")
+    transaction = update_install.prepare_transaction(
+        identity, _release(), staging, staging.stat().st_size,
+        update_install.file_sha256(staging),
+    )
+
+    def crash(*args):
+        raise update_install.TransactionError("crash before journal commit")
+
+    monkeypatch.setattr(update_install, "write_journal", crash)
+    with pytest.raises(update_install.TransactionError):
+        update_install.commit_replacement(identity, staging, transaction.backup)
+    assert not identity.identity_matches()
+    assert update_install.recover(_identity(target)) == str(transaction.backup)
+    assert target.read_bytes().endswith(b"new")
+    assert transaction.backup.exists()
+    assert not update_install.journal_path(target).exists()
+
+
+def test_staged_recovery_rejects_an_unrelated_replacement(tmp_path):
+    target = _fake_appimage(tmp_path / "Strom.AppImage")
+    staging = _fake_appimage(tmp_path / ".Strom.AppImage.staging-test", tag="new")
+    transaction = update_install.prepare_transaction(
+        _identity(target), _release(), staging, staging.stat().st_size,
+        update_install.file_sha256(staging),
+    )
+    foreign = _fake_appimage(tmp_path / "foreign.AppImage", tag="new")
+    os.replace(foreign, target)
+    with pytest.raises(update_install.TransactionError, match="current AppImage"):
+        update_install.recover(_identity(target))
+    assert transaction.backup.exists()
+    assert staging.exists()
+
+
 def test_prepare_and_commit_replacement(tmp_path):
     target = _fake_appimage(tmp_path / "Strom.AppImage", tag="old-version-bytes")
     identity = _identity(target)

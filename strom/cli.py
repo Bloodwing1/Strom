@@ -24,6 +24,7 @@ from strom.controller import ControlReport, ControllerDeps, run_control_cycle
 from strom.control import SystemClock
 from strom.errors import ConfigurationError, StromError
 from strom.plug import PlugCredentials
+from strom.thermal_state import STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,14 @@ def build_controller_deps(config: AppConfig,
             city=city,
             weather_api_key=config.weather_api_key,
             price_api_key=config.price_api_key,
+            freq=config.house.freq,
         )
 
     return ControllerDeps(
         fetch_data=fetch_data,
         clock=SystemClock(),
         interval_seconds=config.house.dt_hours * 3600.0,
+        state_path=config.config_dir / STATE_FILE,
     )
 
 
@@ -77,7 +80,7 @@ def write_report(path: str, report: ControlReport) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="strom",
-        description="Optimize hourly heating against weather forecasts and "
+        description="Optimize heating against weather forecasts and "
                     "day-ahead electricity prices.",
     )
     parser.add_argument(
@@ -87,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--horizon-hours", type=int, default=24,
-        help="How many whole-hour intervals ahead to optimize (default 24, minimum 2).",
+        help="Forecast horizon in hours (default 24, minimum 2).",
     )
     parser.add_argument(
         "--log-level", default="INFO",

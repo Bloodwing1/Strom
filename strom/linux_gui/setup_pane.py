@@ -867,7 +867,14 @@ class SetupPaneMixin(WindowBase):
             )
         return PlugCredentials(device_ip=device_ip)
 
+    def _plug_test_fields(self) -> tuple[str, ...]:
+        return tuple(field.text() for field in (
+            self._config_dir_edit, self._tapo_ip, self._tapo_email, self._tapo_password,
+        ))
+
     def _on_test_tapo(self) -> None:
+        if self._tested_plug is not None:
+            return
         credentials = self._plug_credentials_for_test()
         if credentials is None:
             self._set_chip(
@@ -876,7 +883,12 @@ class SetupPaneMixin(WindowBase):
                 error=True,
             )
             return
+        config_dir = self._prepared_dir_for_save(self._tapo_status)
+        if config_dir is None:
+            return
         self._tested_plug = credentials
+        self._tested_plug_dir = config_dir
+        self._tested_plug_fields = self._plug_test_fields()
         self._tapo_test.setEnabled(False)
         self._set_chip(self._tapo_status, self._translated("Testing…"))
         self._checker.check_plug(credentials)
@@ -884,24 +896,30 @@ class SetupPaneMixin(WindowBase):
     def _on_plug_checked(
         self, ok: bool, message: str, plug_config: str
     ) -> None:
-        self._tapo_test.setEnabled(True)
-        if not ok:
-            self._set_chip(
-                self._tapo_status, self._translated(message), error=True
-            )
-            return
-        # Reaching the plug and storing the proof are separate outcomes: a
-        # failed save keeps its own error instead of the success chip.
-        if plug_config and not self._persist_plug_config(plug_config):
-            return
-        self._set_chip(self._tapo_status, self._translated("Works ✓"))
+        try:
+            if self._tested_plug_fields != self._plug_test_fields():
+                self._refresh_setup_status()
+                return
+            if not ok:
+                self._set_chip(
+                    self._tapo_status, self._translated(message), error=True
+                )
+                return
+            if plug_config and not self._persist_plug_config(plug_config):
+                return
+            self._set_chip(self._tapo_status, self._translated("Works ✓"))
+        finally:
+            self._tested_plug = None
+            self._tested_plug_dir = None
+            self._tested_plug_fields = None
+            self._refresh_controls()
 
     def _persist_plug_config(self, plug_config: str) -> bool:
         """Store the derived proof so the account is no longer needed."""
         credentials = self._tested_plug
         if credentials is None or not credentials.device_ip:
             return True
-        config_dir = self._prepared_dir_for_save(self._tapo_status)
+        config_dir = self._tested_plug_dir
         if config_dir is None:
             return False
         try:
