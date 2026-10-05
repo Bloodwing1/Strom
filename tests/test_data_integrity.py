@@ -271,12 +271,32 @@ class TestJoinAndHorizon:
         assert str(df.index.tz) == "UTC"
         assert not df.isna().values.any()
 
-    def test_get_temp_price_df_rejects_incomplete_horizon(self):
+    @pytest.mark.parametrize("market_freq", ["h", "15min"])
+    def test_unpublished_tail_shortens_horizon_without_inventing_prices(self, market_freq, caplog):
+        now = pd.Timestamp("2025-01-01 06:20", tz="UTC")
+        weather = weather_series(utc_range("2025-01-01", 48))
+        market = pd.date_range(now.floor("D"), now.floor("D") + 24 * H,
+                               freq=market_freq, inclusive="left")
+        df = get_temp_price_df(weather, price_series(market), now=now)
+        assert len(df) == 17
+        assert df.index[0] == now
+        assert df.index[-1] + H <= now.floor("D") + 24 * H
+        assert "Shortening" in caplog.text
+
+    def test_get_temp_price_df_rejects_insufficient_published_intervals(self):
         now = pd.Timestamp("2025-01-01 13:20", tz="UTC")
         weather = weather_series(utc_range("2025-01-01 12:00", 30))
-        prices = price_series(utc_range("2025-01-01 12:00", 4))
-        with pytest.raises(CoverageError):
+        prices = price_series(utc_range("2025-01-01 12:00", 3))
+        with pytest.raises(CoverageError, match="enough complete"):
             get_temp_price_df(weather=weather, prices=prices, now=now)
+
+    def test_shortened_horizon_still_rejects_internal_outage(self):
+        now = pd.Timestamp("2025-01-01 06:00", tz="UTC")
+        weather = weather_series(utc_range("2025-01-01", 48))
+        prices = price_series(utc_range("2025-01-01", 24))
+        prices = prices.drop(prices.index[10:12])
+        with pytest.raises(CoverageError, match="No electricity price"):
+            get_temp_price_df(weather, prices, now=now)
 
     def test_single_interval_horizon_aligns_without_crashing(self):
         now = pd.Timestamp("2025-01-01 13:20", tz="UTC")

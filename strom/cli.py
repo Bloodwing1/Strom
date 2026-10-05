@@ -90,7 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--horizon-hours", type=int, default=24,
-        help="Forecast horizon in hours (default 24, minimum 2).",
+        help="Maximum forecast horizon in hours (default 24, minimum 2); "
+             "shortened when future electricity prices are not yet published.",
     )
     parser.add_argument(
         "--log-level", default="INFO",

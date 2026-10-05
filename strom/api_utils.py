@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 import warnings
@@ -98,13 +99,15 @@ def _validate_weather_payload(payload, city: str) -> list[dict]:
             f"Weather response for {city!r} is missing the forecast list; "
             "unexpected response schema."
         )
+    if not isinstance(entries, list):
+        raise WeatherProviderError("Weather forecast list must be an array.")
     if not entries:
         raise WeatherProviderError(
             f"Weather provider returned an empty forecast for {city!r}."
         )
     for position, entry in enumerate(entries):
         if not isinstance(entry, dict) or "dt" not in entry \
-                or "main" not in entry or "temp" not in entry.get("main", {}):
+                or not isinstance(entry.get("main"), dict) or "temp" not in entry["main"]:
             raise WeatherProviderError(
                 f"Weather response for {city!r} is malformed at entry "
                 f"{position}; unexpected response schema."
@@ -168,10 +171,24 @@ def get_weather_data(city: str = "Barcelona, ES",
 
     # Unix epochs are UTC by definition; UTC is the canonical internal
     # timezone (audit issue 34). Downstream code converts if needed.
+    try:
+        if any(not isinstance(entry["dt"], (int, float))
+               or isinstance(entry["dt"], bool) or not math.isfinite(entry["dt"])
+               for entry in entries):
+            raise ValueError("invalid epochs")
+        timestamps = pd.DatetimeIndex([
+            pd.Timestamp(entry["dt"], unit="s", tz="UTC") for entry in entries
+        ])
+        temperatures = [float(entry["main"]["temp"]) - 273.15 for entry in entries]
+        if (timestamps.hasnans or timestamps.has_duplicates
+                or not all(math.isfinite(value) for value in temperatures)):
+            raise ValueError("invalid observations")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise WeatherProviderError(
+            "Weather response contains invalid temperatures or timestamps."
+        ) from exc
     temperature_series = pd.Series(
-        {pd.Timestamp(entry['dt'], unit='s', tz='UTC'):
-            float(entry['main']['temp']) - 273.15 for entry in entries},
-        name='ExteriorTemperature',
+        temperatures, index=timestamps, name="ExteriorTemperature",
     )
     temperature_series.index.name = 'Timestamp'
     return temperature_series.sort_index()

@@ -195,6 +195,7 @@ def select_update(
         if isinstance(item, Mapping)
         for release in (parse_release(item, arch),)
         if release is not None
+        and (current.is_prerelease or not release.prerelease)
     ]
     candidates = [
         entry for entry in parsed if entry.is_installable and is_newer(entry.version, current)

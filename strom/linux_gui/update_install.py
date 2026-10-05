@@ -410,9 +410,9 @@ def prune_backups(target: AppImageIdentity, *, keep: int = KEEP_BACKUPS) -> None
 def prune_staging(target: AppImageIdentity) -> None:
     """Delete updater-owned staging files left by an abandoned download.
 
-    A staging file is only useful while a transaction records it; recovery
-    runs before any new download, so anything else beside the target was
-    abandoned when the app closed.
+    The caller holds the exclusive update lock. Downloads hold the same
+    lock from before staging creation through installation or cleanup, so
+    recovery cannot mistake another window's live download for an orphan.
     """
     prefix = prefixed(target.path, STAGING_MARK)
     try:
@@ -436,12 +436,13 @@ def recover(target: AppImageIdentity, *, keep: int = KEEP_BACKUPS) -> str | None
     Returns the backup location when the new version is already in place,
     None when there was nothing to recover. Raises TransactionError when a
     journal exists but cannot be trusted; the caller then refuses further
-    updates instead of guessing.
+    updates instead of guessing. The caller must hold the exclusive update
+    lock for the entire recovery.
     """
     payload = load_journal(target.path)  # raises on corrupt/unowned records
     if payload is None:
-        # No transaction is in flight, so any staging file is abandoned
-        # (the app closed before installing the verified download).
+        # With the update lock held, no download/transaction can be in
+        # flight in another window, so remaining staging is abandoned.
         prune_staging(target)
         return None
     if str(payload["state"]) == "staged":

@@ -92,6 +92,62 @@ def test_overwriting_tightens_permissions_of_existing_file(tmp_path):
     assert path.read_text() == "new\n"
 
 
+def test_secret_write_replaces_symlink_without_touching_target(tmp_path):
+    target = tmp_path / "unrelated"
+    target.write_text("keep me")
+    target.chmod(0o644)
+    path = tmp_path / WEATHER_FILE
+    path.symlink_to(target)
+
+    save_api_key(tmp_path, WEATHER_FILE, "new-token", "weather key")
+
+    assert not path.is_symlink()
+    assert path.read_text() == "new-token\n"
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert target.read_text() == "keep me"
+    assert target.stat().st_mode & 0o777 == 0o644
+
+
+def test_secret_is_private_before_replacing_existing_file(tmp_path, monkeypatch):
+    from pathlib import Path
+    from strom.linux_gui import setup_files
+
+    path = tmp_path / WEATHER_FILE
+    path.write_text("old\n")
+    path.chmod(0o644)
+    replace = os.replace
+    observed = []
+
+    def inspect_replace(source, destination):
+        assert Path(source).stat().st_mode & 0o777 == 0o600
+        assert Path(source).read_text() == "new\n"
+        assert path.read_text() == "old\n"
+        observed.append(True)
+        replace(source, destination)
+
+    monkeypatch.setattr(setup_files.os, "replace", inspect_replace)
+    with path.open() as old_reader:
+        save_api_key(tmp_path, WEATHER_FILE, "new", "weather key")
+        assert old_reader.read() == "old\n"
+    assert observed == [True]
+
+
+def test_failed_secret_replace_keeps_old_file_and_cleans_temporary(tmp_path, monkeypatch):
+    from strom.linux_gui import setup_files
+
+    path = tmp_path / WEATHER_FILE
+    path.write_text("old\n")
+
+    def fail_replace(*args):
+        raise OSError("disk error")
+
+    monkeypatch.setattr(setup_files.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="disk error"):
+        save_api_key(tmp_path, WEATHER_FILE, "new", "weather key")
+    assert path.read_text() == "old\n"
+    assert list(tmp_path.iterdir()) == [path]
+
+
 def test_api_key_trims_pasted_whitespace(tmp_path):
     path = save_api_key(tmp_path, PRICE_FILE, "  token  ", "price key")
 

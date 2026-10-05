@@ -27,6 +27,10 @@ AppImage from the
 [releases page](https://github.com/Bloodwing1/Strom/releases/latest). Expect
 changes, and please report anything that misbehaves.
 
+![Strom Desktop dashboard showing heating controls and an example last-run summary](docs/images/strom-desktop.png)
+
+*0.4.0 preview with example run data. Controls and colors follow your desktop theme.*
+
 ## Install with Gear Lever
 
 [Gear Lever](https://github.com/mijorus/gearlever) adds AppImages to your
@@ -74,7 +78,13 @@ page for a manual download instead.
   a derived key, never the password.
 - **Start heating** runs one control interval, about an hour. **Keep running
   automatically** (on by default) starts the next run when the current one
-  finishes, and each run shows the heater on-time and estimated cost.
+  finishes. You can turn repeats off during a run without interrupting it.
+- A last-run card keeps the most recent completed run's estimated heater
+  on-time and cost visible while the next run is working. These are model
+  estimates, not live temperature readings or measured savings.
+- Native **Heating** and **View** menus include shortcuts: **Ctrl+Enter** to
+  start (with confirmation), **Ctrl+L** for the activity log, and **Ctrl+W**
+  to close or hide the window. Colors and typography follow your desktop.
 - Closing the window during a run hides it to the system tray and notifies
   you when it finishes. Without a tray, closing during a run is refused.
   There is no Stop button.

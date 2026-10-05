@@ -184,6 +184,10 @@ jobs:
             echo "Replaces a previous AppImage in place; settings and credentials"
             echo "stay in the user configuration directory."
             echo
+            if [ -f "docs/releases/$VERSION.md" ]; then
+              cat "docs/releases/$VERSION.md"
+              echo
+            fi
             echo "## Build provenance"
             echo '```text'
             cat stage/provenance.txt

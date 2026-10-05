@@ -707,4 +707,21 @@ SPANISH.update({
         "Token de ENTSO-E guardado en {path}"
     ),
     "Plug address saved to {path}": "Dirección del enchufe guardada en {path}",
+    "Heating": "Calefacción",
+    "View": "Ver",
+    "Last completed run": "Último ciclo completado",
+    "A small record of your warmth. Your first completed run will appear here.": (
+        "Un pequeño registro de tu calefacción. Tu primer ciclo completado aparecerá aquí."
+    ),
+    "Heater on": "Calefacción encendida",
+    "Estimated cost": "Coste estimado",
+    "Reported heater on-time": "Tiempo de encendido registrado",
+    "{minutes} min": "{minutes} min",
+    "Not available": "No disponible",
+    "{on} of {interval} minutes · model estimate": (
+        "{on} de {interval} minutos · estimación del modelo"
+    ),
+    "Turning this off won't interrupt the current run.": (
+        "Desactivar esta opción no interrumpe el ciclo actual."
+    ),
 })

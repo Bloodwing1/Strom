@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from strom.optimization_utils import House, find_heating_output
+from strom.thermal_state import advance_temperature
 
 
 def input_df(hours=24, exterior=10.0, price=0.15, start="2025-01-20"):
@@ -56,6 +57,13 @@ class TestPhysicalRelationships:
         h = house()
         assert (result["InteriorTemperature"] >= h.T_min - 1e-3).all()
         assert (result["InteriorTemperature"] <= h.T_max + 1e-3).all()
+        # The final output also covers a physical interval, even though its
+        # end temperature is not a returned schedule row.
+        for row in result.itertuples():
+            h.T_interior_init, h.T_wall_init = advance_temperature(
+                h, row.ExteriorTemperature, h.dt_hours * 3600., row.HeaterOutput,
+            )
+            assert h.T_min - 1e-3 <= h.T_interior_init <= h.T_max + 1e-3
 
 
 class TestEconomicRelationships:

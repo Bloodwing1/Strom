@@ -28,6 +28,7 @@ from __future__ import annotations
 import io
 import ipaddress
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -110,10 +111,17 @@ def _non_blank(value: str, what: str) -> str:
 
 def _write_secret_file(path: Path, content: str) -> None:
     """Write ``content`` to ``path`` with mode 0600, replacing any old value."""
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as handle:
-        handle.write(content)
-    os.chmod(path, 0o600)
+    # A private sibling avoids following symlinks or exposing new contents
+    # through an existing file's permissions (or already-open descriptors).
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def save_api_key(config_dir: Path, file_name: str, key: str, what: str) -> Path:

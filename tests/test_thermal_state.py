@@ -86,6 +86,31 @@ def test_real_relay_pulses_keep_comfort_and_match_the_next_temperature(upper):
         )
 
 
+def test_heating_can_be_delayed_when_on_first_would_overheat():
+    from strom.control import ActuationPlan, ActuationSegment, MIN_PULSE_SECONDS
+    from strom.thermal_state import _within_comfort
+
+    house = House(T_interior_init=24., T_wall_init=23.)
+    feasible = ActuationPlan((
+        ActuationSegment(False, 1876.268138),
+        ActuationSegment(True, 1723.731862),
+    ), 3600.)
+    assert _within_comfort(house, 5., feasible)
+    assert plan_temperature(house, 5., feasible)[0] == pytest.approx(24., abs=.001)
+
+    plan = temperature_plan(house, 5., 24., 3600.)
+    assert [segment.on for segment in plan.segments] == [False, True]
+    assert sum(segment.seconds for segment in plan.segments) == pytest.approx(3600.)
+    assert all(segment.seconds >= MIN_PULSE_SECONDS
+               for segment in plan.segments if segment.on)
+    assert _within_comfort(house, 5., plan)
+    assert plan_temperature(house, 5., plan)[0] == pytest.approx(24., abs=.001)
+    # Reversing a feasible delayed pulse must not bypass the comfort checker.
+    assert not _within_comfort(
+        house, 5., ActuationPlan(tuple(reversed(plan.segments)), 3600.)
+    )
+
+
 def test_unachievable_comfort_with_minimum_relay_pulse_is_rejected():
     house = House(T_interior_init=18., T_wall_init=18., T_max=18.02)
     with pytest.raises(InvalidScheduleError, match="No relay plan"):

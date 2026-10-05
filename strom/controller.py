@@ -29,6 +29,8 @@ import pandas as pd
 
 from .control import (
     MAX_ON_SECONDS_DEFAULT,
+    ActuationPlan,
+    ActuationSegment,
     Clock,
     MaxOnWatchdog,
     SystemClock,
@@ -202,23 +204,40 @@ async def run_control_cycle(
                 plan.interval_seconds - plan.total_on_seconds,
                 plan.interval_seconds,
             )
-            estimated_cost = _first_interval_cost(schedule)
-            if house is not None:
-                estimated_cost = _plan_cost(data, schedule, house, plan)
             watchdog = _make_watchdog(deps, dev)
             watchdog.start()
             if deps.state_path is not None:
                 # An interrupted ON interval cannot leave a reusable estimate.
                 deps.state_path.unlink(missing_ok=True)
-            await _execute(deps, dev, plan, watchdog)
+            executed = await _execute(deps, dev, plan, watchdog)
+            execution_finished = deps.clock.monotonic()
+            execution_ended_on = getattr(dev, "is_on", None) is not False
         finally:
             await _finish_shutdown(dev, watchdog)
+        if watchdog.tripped:
+            raise DeviceError("The max-on watchdog interrupted actuation; estimate discarded.")
+        # Include the final verified shutdown, especially for a full-ON plan.
+        # Until verification completes, an ON relay is conservatively still ON.
+        shutdown_seconds = deps.clock.monotonic() - execution_finished
+        if shutdown_seconds > 0:
+            executed = ActuationPlan(
+                executed.segments + (ActuationSegment(
+                    execution_ended_on, shutdown_seconds,
+                ),),
+                executed.interval_seconds + shutdown_seconds,
+            )
+        estimated_cost = _first_interval_cost(schedule)
+        if house is not None:
+            estimated_cost = _plan_cost(data, schedule, house, executed)
+        elif executed.total_on_seconds != plan.total_on_seconds:
+            # Without a house/heater rating, the solver cost cannot be corrected.
+            estimated_cost = None
         if deps.state_path is not None:
             try:
                 save_state(
                     deps.state_path, configured_house, credentials.device_ip,
                     plan_temperature(
-                        house, float(schedule["ExteriorTemperature"].iloc[0]), plan
+                        house, float(schedule["ExteriorTemperature"].iloc[0]), executed
                     ),
                 )
             except OSError as exc:
@@ -230,8 +249,8 @@ async def run_control_cycle(
             "ON" if getattr(dev, "is_on", False) else "OFF",
         )
         return ControlReport(
-            on_seconds=plan.total_on_seconds,
-            interval_seconds=plan.interval_seconds,
+            on_seconds=executed.total_on_seconds,
+            interval_seconds=executed.interval_seconds,
             estimated_cost_eur=estimated_cost,
         )
 
@@ -267,9 +286,11 @@ def _make_watchdog(deps: ControllerDeps, dev) -> MaxOnWatchdog:
                          clock=deps.clock)
 
 
-async def _execute(deps: ControllerDeps, dev, plan, watchdog: MaxOnWatchdog) -> None:
+async def _execute(
+    deps: ControllerDeps, dev, plan: ActuationPlan, watchdog: MaxOnWatchdog,
+) -> ActuationPlan:
     try:
-        await execute_plan(dev, plan, deps.clock, watchdog)
+        return await execute_plan(dev, plan, deps.clock, watchdog)
     except StromError:
         raise
     except Exception as exc:

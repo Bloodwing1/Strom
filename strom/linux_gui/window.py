@@ -14,8 +14,7 @@ implementation plan is unchanged: the window owns a :class:`CycleRunner`
 and never touches the child process directly; non-secret UI preferences
 persist in ``QSettings`` with defensive restore; secrets never enter
 ``QSettings`` or logs; configuration validation beyond "usable directory"
-is left to the child CLI because ``load_app_config()`` mutates the
-environment via dotenv.
+is left to the child CLI.
 """
 
 from __future__ import annotations
@@ -152,8 +151,8 @@ class MainWindow(
         outer.addWidget(column, 1)
 
         body = QtWidgets.QVBoxLayout(column)
-        body.setContentsMargins(18, 16, 18, 16)
-        body.setSpacing(14)
+        body.setContentsMargins(24, 20, 24, 20)
+        body.setSpacing(16)
 
         header = QtWidgets.QHBoxLayout()
         header.setSpacing(10)
@@ -205,6 +204,26 @@ class MainWindow(
         # The update actions live in a compact application menu, available
         # from both the setup and the heating views (update plan §6).
         menu_bar = self.menuBar()
+        self._heating_menu = menu_bar.addMenu("Heating")
+        self._start_action = self._heating_menu.addAction("Start heating")
+        self._start_action.setShortcut("Ctrl+Return")
+        self._start_action.triggered.connect(self._on_run_clicked)
+        self._repeat_action = self._heating_menu.addAction("Keep running automatically")
+        self._repeat_action.setCheckable(True)
+        self._repeat_action.toggled.connect(self._repeat_checkbox.setChecked)
+        self._repeat_checkbox.toggled.connect(self._repeat_action.setChecked)
+        self._heating_menu.addSeparator()
+        self._accounts_action = self._heating_menu.addAction("Manage accounts")
+        self._accounts_action.triggered.connect(self._open_setup)
+        self._close_action = self._heating_menu.addAction("Close")
+        self._close_action.setShortcut("Ctrl+W")
+        self._close_action.triggered.connect(self.close)
+        self._view_menu = menu_bar.addMenu("View")
+        self._activity_action = self._view_menu.addAction("Show technical details")
+        self._activity_action.setCheckable(True)
+        self._activity_action.setShortcut("Ctrl+L")
+        self._activity_action.toggled.connect(self._show_activity)
+        self._details_toggle.toggled.connect(self._activity_action.setChecked)
         self._help_menu = menu_bar.addMenu("Help")
         self._check_updates_action = self._help_menu.addAction("Check for updates")
         self._check_updates_action.triggered.connect(self._show_update_dialog)
@@ -233,6 +252,12 @@ class MainWindow(
         super().changeEvent(event)
         if event.type() == QtCore.QEvent.Type.ApplicationFontChange:
             apply_typography(self)
+
+    def _show_activity(self, visible: bool) -> None:
+        self._details_toggle.setChecked(visible)
+        if visible:
+            self._pages.setCurrentIndex(1)
+            self._log.setFocus()
 
     def _set_update_run_block(self, blocked: bool) -> None:
         """Window hook called by the coordinator around accepted updates."""
@@ -371,6 +396,16 @@ class MainWindow(
                 )
                 widget.setProperty("sourceAccessibleName", source)
                 widget.setAccessibleName(self._translated(source))
+        self._heating_menu.setTitle(self._translated("Heating"))
+        self._view_menu.setTitle(self._translated("View"))
+        for action, source in (
+            (self._start_action, "Start heating"),
+            (self._repeat_action, "Keep running automatically"),
+            (self._accounts_action, "Manage accounts"),
+            (self._close_action, "Close"),
+            (self._activity_action, "Show technical details"),
+        ):
+            action.setText(self._translated(source))
         self._help_menu.setTitle(self._translated("Help"))
         self._language_label.setText(self._translated("Language"))
         self._check_updates_action.setText(self._translated("Check for updates"))
@@ -386,6 +421,7 @@ class MainWindow(
         if self._update_dialog is not None:
             self._update_dialog.retranslate()
         self._update_location_note()
+        self._last_run.retranslate(self._translated)
 
     def _refresh_controls(self) -> None:
         """One place decides control enablement (update plan §4).
@@ -426,10 +462,16 @@ class MainWindow(
             widget.setEnabled(allow)
         self._tapo_test.setEnabled(allow and self._tested_plug is None)
         self._run_button.setEnabled(allow and setup_ready)
+        self._start_action.setEnabled(allow and setup_ready)
+        self._accounts_action.setEnabled(allow)
         self._run_button.setToolTip(
             "" if setup_ready else self._translated("Finish setup to start heating.")
         )
-        self._repeat_checkbox.setEnabled(allow and setup_ready)
+        # This changes only the next run; never interrupts the owned child.
+        self._repeat_checkbox.setEnabled(not update_block and setup_ready)
+        self._repeat_action.setEnabled(not update_block and setup_ready)
+        self._repeat_note.setVisible(cycle_active)
+        self._checklist_label.setVisible(not cycle_active)
         self._finish_setup_button.setVisible(not setup_ready)
         self._finish_setup_button.setEnabled(allow)
         self._setup_later.setEnabled(allow)

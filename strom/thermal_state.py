@@ -46,18 +46,20 @@ def plan_temperature(house: House, exterior: float, plan: ActuationPlan) -> tupl
     return estimate.T_interior_init, estimate.T_wall_init
 
 
-def _pulse_plan(duty: float, seconds: float, pulses: int) -> ActuationPlan:
+def _pulse_plan(
+    duty: float, seconds: float, pulses: int, *, delayed: bool = False,
+) -> ActuationPlan:
     if duty == 0:
         return ActuationPlan((ActuationSegment(False, seconds),), seconds)
     period = seconds / pulses
     on_seconds = min(period, max(MIN_PULSE_SECONDS, duty * period))
     if on_seconds == period:
         return ActuationPlan((ActuationSegment(True, seconds),), seconds)
-    segments = []
+    segments: list[ActuationSegment] = []
     for _ in range(pulses):
-        segments.append(ActuationSegment(True, on_seconds))
-        if on_seconds < period:
-            segments.append(ActuationSegment(False, period - on_seconds))
+        on = ActuationSegment(True, on_seconds)
+        off = ActuationSegment(False, period - on_seconds)
+        segments.extend((off, on) if delayed else (on, off))
     return ActuationPlan(tuple(segments), seconds)
 
 
@@ -102,20 +104,24 @@ def temperature_plan(
     maximum_pulses = max(1, int(seconds / MIN_PULSE_SECONDS))
     pulses = 1
     while True:
-        low, high = 0.0, 1.0
-        if (plan_temperature(house, exterior, _pulse_plan(high, seconds, pulses))[0]
+        if (plan_temperature(house, exterior, _pulse_plan(1., seconds, pulses))[0]
                 < target - TEMPERATURE_TOL):
             break
-        for _ in range(32):
-            duty = (low + high) / 2
-            plan = _pulse_plan(duty, seconds, pulses)
-            if plan_temperature(house, exterior, plan)[0] >= target:
-                high = duty
-            else:
-                low = duty
-        plan = _pulse_plan(high, seconds, pulses)
-        if _within_comfort(house, exterior, plan):
-            return plan
+        # Heating first can overshoot even when delaying the same relay pulse
+        # is feasible. Solve each ordering independently: timing changes the
+        # terminal temperature, not just the within-interval extrema.
+        for delayed in (False, True):
+            low, high = 0.0, 1.0
+            for _ in range(32):
+                duty = (low + high) / 2
+                plan = _pulse_plan(duty, seconds, pulses, delayed=delayed)
+                if plan_temperature(house, exterior, plan)[0] >= target:
+                    high = duty
+                else:
+                    low = duty
+            plan = _pulse_plan(high, seconds, pulses, delayed=delayed)
+            if _within_comfort(house, exterior, plan):
+                return plan
         if pulses == maximum_pulses:
             break
         pulses = min(pulses * 2, maximum_pulses)

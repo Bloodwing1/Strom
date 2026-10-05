@@ -119,7 +119,7 @@ def load_credentials(config_dir: Path) -> Credentials:
     exported variables take precedence over file values.
     """
     env_file = config_dir / CREDENTIAL_FILE
-    raw_values = dotenv_values(env_file) if env_file.is_file() else {}
+    raw_values = dotenv_values(env_file, interpolate=False) if env_file.is_file() else {}
     file_values = {
         key: (value or "").strip() for key, value in raw_values.items()
     }

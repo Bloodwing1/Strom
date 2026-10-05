@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from strom.linux_gui.dashboard import LastRunCard
 from strom.linux_gui.runner import CycleRunner, LaunchSpec
 from strom.linux_gui.setup_check import SetupChecker
 from strom.linux_gui.setup_files import SetupStatus
@@ -56,6 +57,7 @@ class WindowBase(QtWidgets.QMainWindow):
     _horizon: QtWidgets.QSpinBox
     _log_level: QtWidgets.QComboBox
     _repeat_checkbox: QtWidgets.QCheckBox
+    _last_run: LastRunCard
     _settings_folder_label: QtWidgets.QLabel
 
     def _translated(self, text: str) -> str:

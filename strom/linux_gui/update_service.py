@@ -354,7 +354,10 @@ class UpdateService(QObject):
         return True
 
     def download(self, release: ReleaseInfo, target: Path) -> bool:
-        """Stream a release into an owned staging file beside the target AppImage."""
+        """Stream a release into staging while the caller holds the update lock.
+
+        The caller must retain that lock through installation or staging cleanup.
+        """
         if self._reply is not None:
             return False
         if release.appimage is None or release.checksums is None:
@@ -438,6 +441,15 @@ class UpdateService(QObject):
             return
         data = bytes(reply.readAll().data())
         if not data:
+            return
+        if (
+            reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) != 200
+            or isinstance(
+                reply.attribute(QNetworkRequest.Attribute.RedirectionTargetAttribute),
+                QUrl,
+            )
+        ):
+            # Redirect/error bodies are not part of the asset or metadata.
             return
         if self._role in ("check", "sums"):
             self._metadata.extend(data)
@@ -798,6 +810,7 @@ class UpdateCoordinator(QObject):
     def run_blocked(self) -> bool:
         """True while an accepted update forbids starting heating runs."""
         return self._phase is not None or self._state in (
+            UpdateState.Downloading,
             UpdateState.Installing,
             UpdateState.Restarting,
         )
@@ -847,6 +860,9 @@ class UpdateCoordinator(QObject):
 
     def accept_install(self, release: ReleaseInfo) -> bool:
         """The explicit user consent: download, verify, install, restart."""
+        if self._state is UpdateState.Checking or self._service.is_busy():
+            self._set_message("An update is already running.")
+            return False
         if self._phase is not None or self._state in (
             UpdateState.Downloading,
             UpdateState.Installing,
@@ -870,13 +886,19 @@ class UpdateCoordinator(QObject):
         self._transaction = None
         self._restore_after_stop = None
         self._hooks.set_run_block(True)
+        # Recovery in another window must not prune live staging, including
+        # the interval before prepare_transaction writes the journal.
+        if not self._acquire_update_lock():
+            return False
         if self._prepared is not None and self._prepared.release == release:
             self._begin_install()
             return True
         self._set_state(UpdateState.Downloading)
         self._set_message("Downloading the update…")
         if not self._service.download(release, self._target.path):
-            # downloadFailed already ran the failure path synchronously.
+            # Some rejections emit downloadFailed synchronously; others only
+            # return False. Settlement is idempotent, so handle both here.
+            self._on_download_failed("the update download could not be started")
             return False
         return True
 
@@ -952,7 +974,7 @@ class UpdateCoordinator(QObject):
 
     def _recover_startup(self) -> None:
         target, lock = self._target, self._lock
-        if target is None or lock is None:
+        if target is None or lock is None or lock.is_held():
             return
         try:
             held = lock.acquire(exclusive=True)
@@ -1000,6 +1022,8 @@ class UpdateCoordinator(QObject):
 
     def _on_cancelled(self) -> None:
         if self._state is UpdateState.Downloading:
+            if self._lock is not None:
+                self._lock.release()
             self._set_state(UpdateState.Idle)
             self._hooks.set_run_block(False)
             self._set_message("Update download cancelled.")
@@ -1014,6 +1038,28 @@ class UpdateCoordinator(QObject):
 
     # --- installation transaction (§5) ---
 
+    def _acquire_update_lock(self) -> bool:
+        lock = self._lock
+        if lock is None:
+            self._settle_failed(restore=False, detail="no update lock is available")
+            return False
+        if lock.is_held():
+            return True
+        try:
+            held = lock.acquire(exclusive=True)
+        except update_install.TransactionError as exc:
+            self._settle_failed(restore=False, detail=str(exc))
+            return False
+        if not held:
+            self._settle_failed(
+                restore=False,
+                detail=(
+                    "another Strom window is running an update or a cycle; "
+                    "close it and try again"
+                ),
+            )
+        return held
+
     def _begin_install(self) -> None:
         prepared, target, lock = self._prepared, self._target, self._lock
         if prepared is None or target is None or lock is None:
@@ -1024,19 +1070,7 @@ class UpdateCoordinator(QObject):
                 detail="a heating cycle is running; the update was not installed",
             )
             return
-        try:
-            held = lock.acquire(exclusive=True)
-        except update_install.TransactionError as exc:
-            self._settle_failed(restore=False, detail=str(exc))
-            return
-        if not held:
-            self._settle_failed(
-                restore=False,
-                detail=(
-                    "another Strom window is running an update or a cycle; "
-                    "close it and try again"
-                ),
-            )
+        if not self._acquire_update_lock():
             return
         self._settled = False
         self._acked = False

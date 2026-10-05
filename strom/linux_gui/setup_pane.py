@@ -833,13 +833,13 @@ class SetupPaneMixin(WindowBase):
             self._set_chip(self._price_status, message, error=True)
 
     def _plug_credentials_for_test(self) -> PlugCredentials | None:
-        """Build the test credentials: typed values, then stored, then env."""
+        """Test typed credentials, otherwise the CLI's effective credentials."""
         raw = self._config_dir_edit.text().strip()
         stored = read_tapo_credentials(Path(raw).expanduser()) if raw else None
         device_ip = (
             self._tapo_ip.text().strip()
-            or (stored.device_ip if stored else "")
             or os.getenv("DEVICEIP", "").strip()
+            or (stored.device_ip if stored else "")
         )
         if not device_ip:
             return None
@@ -849,22 +849,15 @@ class SetupPaneMixin(WindowBase):
             return PlugCredentials(
                 device_ip=device_ip, email=email, password=password
             )
-        if stored and stored.plug_config:
-            return PlugCredentials(
-                device_ip=device_ip, plug_config=stored.plug_config
-            )
-        if stored and stored.email and stored.password:
-            return PlugCredentials(
-                device_ip=device_ip,
-                email=stored.email,
-                password=stored.password,
-            )
-        env_email = os.getenv("EMAIL", "").strip()
-        env_password = os.getenv("PASSWORD", "").strip()
-        if env_email and env_password:
-            return PlugCredentials(
-                device_ip=device_ip, email=env_email, password=env_password
-            )
+        plug_config = os.getenv("PLUG_CONFIG", "").strip() or (
+            stored.plug_config if stored else ""
+        )
+        if plug_config:
+            return PlugCredentials(device_ip=device_ip, plug_config=plug_config)
+        email = os.getenv("EMAIL", "").strip() or (stored.email if stored else "")
+        password = os.getenv("PASSWORD", "").strip() or (stored.password if stored else "")
+        if email and password:
+            return PlugCredentials(device_ip=device_ip, email=email, password=password)
         return PlugCredentials(device_ip=device_ip)
 
     def _plug_test_fields(self) -> tuple[str, ...]:

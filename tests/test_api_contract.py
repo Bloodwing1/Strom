@@ -95,6 +95,25 @@ class TestWeatherContract:
             with pytest.raises(WeatherProviderError, match="malformed|missing|not a JSON"):
                 get_weather_data("X", http_get=http, sleep=lambda s: None)
 
+    @pytest.mark.parametrize("entry", [
+        {"dt": 1735689600, "main": None},
+        {"dt": 1735689600, "main": {"temp": None}},
+        {"dt": 1735689600, "main": {"temp": "not-a-number"}},
+        {"dt": 1735689600, "main": {"temp": float("inf")}},
+        {"dt": None, "main": {"temp": 283.15}},
+        {"dt": "invalid", "main": {"temp": 283.15}},
+    ])
+    def test_bad_weather_values_raise_typed_provider_error(self, entry):
+        http = FakeHttp([FakeResponse({"list": [entry]})])
+        with pytest.raises(WeatherProviderError):
+            get_weather_data("X", http_get=http)
+
+    def test_duplicate_weather_timestamps_are_not_silently_overwritten(self):
+        entry = valid_weather_payload()["list"][0]
+        http = FakeHttp([FakeResponse({"list": [entry, entry]})])
+        with pytest.raises(WeatherProviderError, match="timestamps"):
+            get_weather_data("X", http_get=http)
+
     def test_empty_forecast_rejected(self):
         http = FakeHttp([FakeResponse({"list": []})])
         with pytest.raises(WeatherProviderError, match="empty forecast"):

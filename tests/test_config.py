@@ -80,6 +80,16 @@ class TestCredentials:
         with pytest.raises(ConfigurationError, match="DEVICEIP"):
             load_credentials(config)
 
+    def test_password_interpolation_is_disabled(self, tmp_path, monkeypatch):
+        from strom.linux_gui.setup_files import save_tapo_credentials, read_tapo_credentials
+
+        monkeypatch.setenv("EXPANDED_SECRET", "not-the-password")
+        password = "abc${EXPANDED_SECRET}${MISSING_SECRET}xyz"
+        save_tapo_credentials(tmp_path, "192.168.1.42", email="e@example.com",
+                              password=password)
+        assert load_credentials(tmp_path).password == password
+        assert read_tapo_credentials(tmp_path).password == password
+
     def test_environment_takes_precedence(self, tmp_path, monkeypatch):
         config = make_config_dir(tmp_path)
         monkeypatch.setenv("DEVICEIP", "10.0.0.1")

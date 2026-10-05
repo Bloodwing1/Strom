@@ -20,6 +20,8 @@ from strom.errors import (
 )
 from strom.optimization_utils import (
     House,
+    _build_dynamics_matrices,
+    _check_solution,
     find_heating_output,
     zero_order_hold_matrices,
 )
@@ -202,6 +204,34 @@ class TestSuccessfulSolve:
         residual = np.abs(predicted - X[:, 1:])
         assert residual.max() < 1e-4
 
+    @pytest.mark.parametrize("mode", ["optimal", "baseline"])
+    @pytest.mark.parametrize("exterior,initial,heater,cooling,price", [
+        (5., 19., 3., 0., .15),
+        (24., 24., 3., 0., -.15),
+        (32., 23., 0., 3., .15),
+        (18., 18., 0., 3., -.15),
+    ])
+    def test_every_output_including_last_keeps_terminal_comfort(
+        self, mode, exterior, initial, heater, cooling, price,
+    ):
+        house = default_house(T_interior_init=initial, T_wall_init=initial,
+                              Q_heater=heater, Q_cooling=cooling)
+        df = make_input(exterior=exterior, price=price)
+        result = find_heating_output(df, house, mode)
+        pd.testing.assert_index_equal(result.index, df.index)
+        Ad, Bd = zero_order_hold_matrices(
+            *_build_dynamics_matrices(house), house.dt_hours,
+        )
+        state = np.array([initial, initial])
+        for row in result.itertuples():
+            # Rows remain interval-start states, including row zero.
+            assert [row.InteriorTemperature, row.WallTemperature] == pytest.approx(
+                state, abs=1e-4)
+            state = Ad @ state + Bd @ np.array([
+                row.HeaterOutput, row.CoolingOutput, row.ExteriorTemperature,
+            ])
+            assert house.T_min - 1e-3 <= state[0] <= house.T_max + 1e-3
+
     def test_optimal_never_costs_more_than_baseline(self):
         df = make_input(exterior=10.0)
         house = default_house()
@@ -216,6 +246,13 @@ class TestInfeasibleAndSolverFailure:
         df = make_input(hours=12, exterior=-40.0)
         house = default_house(Q_heater=0.001, T_interior_init=21.0,
                               T_min=21.0)
+        with pytest.raises(InfeasibleProblemError):
+            find_heating_output(df, house, "optimal")
+
+    def test_infeasibility_in_last_interval_is_not_ignored(self):
+        df = make_input(hours=2, exterior=18.)
+        df.iloc[-1, df.columns.get_loc("ExteriorTemperature")] = -40.
+        house = default_house(Q_heater=0., T_interior_init=18., T_wall_init=18.)
         with pytest.raises(InfeasibleProblemError):
             find_heating_output(df, house, "optimal")
 
@@ -249,13 +286,11 @@ class TestInfeasibleAndSolverFailure:
     def test_non_finite_solver_values_rejected(self):
         """The finite-value guard must trigger on any non-finite output,
         whether it comes from the heater, cooling or state trajectory."""
-        from strom.optimization_utils import _check_solution
-
         house = default_house()
         zeros = np.zeros(24)
         eye = np.eye(2)
         zero_b = np.zeros((2, 3))
-        good = np.tile(np.array([[20.0], [19.0]]), (1, 24))
+        good = np.tile(np.array([[20.0], [19.0]]), (1, 25))
 
         _check_solution(  # fully finite passes
             {"HeaterOutput": np.full(24, 0.5), "CoolingOutput": zeros,
@@ -269,8 +304,32 @@ class TestInfeasibleAndSolverFailure:
         with pytest.raises(SolverError, match="non-finite"):
             _check_solution(
                 {"HeaterOutput": np.full(24, 0.5), "CoolingOutput": zeros,
-                 "_T": np.full((2, 24), np.nan)},
+                 "_T": np.full((2, 25), np.nan)},
                 house, eye, zero_b, zeros)
+
+    @pytest.mark.parametrize("terminal, message", [
+        (25., "comfort bounds"),
+        (21., "Dynamic residual"),
+    ])
+    def test_terminal_solver_state_is_checked(self, terminal, message):
+        states = np.full((2, 3), 20.)
+        states[0, -1] = terminal
+        with pytest.raises(SolverError, match=message):
+            _check_solution(
+                {"HeaterOutput": np.zeros(2), "CoolingOutput": np.zeros(2),
+                 "_T": states},
+                default_house(), np.eye(2), np.zeros((2, 3)), np.zeros(2),
+            )
+
+    def test_last_control_participates_in_dynamic_residual(self):
+        inputs = np.zeros((2, 3))
+        inputs[0, 0] = 1.
+        with pytest.raises(SolverError, match="Dynamic residual"):
+            _check_solution(
+                {"HeaterOutput": np.array([0., 1.]),
+                 "CoolingOutput": np.zeros(2), "_T": np.full((2, 3), 20.)},
+                default_house(), np.eye(2), inputs, np.zeros(2),
+            )
 
     def test_invalid_mode_rejected(self):
         with pytest.raises(InvalidInputError, match="heating mode"):

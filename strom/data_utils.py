@@ -19,10 +19,14 @@ Input data is never mutated in place.
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from .api_utils import get_price_series, get_weather_data
 from .errors import CoverageError
+
+logger = logging.getLogger(__name__)
 
 CANONICAL_TZ = "UTC"
 
@@ -175,7 +179,9 @@ def get_temp_price_df(
     """Fetch (or accept injected) weather and prices for the control horizon.
 
     The first interval begins now, at the configured control frequency.
-    Weather and market intervals are validated over the requested horizon.
+    The requested horizon is capped at the end of published market data;
+    at least two complete control intervals are needed for optimization.
+    Gaps within that horizon still fail validation.
     """
     if horizon_hours < 1:
         raise ValueError(
@@ -198,6 +204,28 @@ def get_temp_price_df(
     start = requested_now if requested_now is not None else pd.Timestamp.now(tz=CANONICAL_TZ)
     target = pd.date_range(start, periods=periods, freq=freq, tz=CANONICAL_TZ)
     market = _to_utc(prices, "price")
+    # A publication ends after its last market interval, not one arbitrary
+    # fill-tolerance beyond its last timestamp. Infer cadence from the source
+    # rather than the (possibly much longer) control interval.
+    market_step = market.index.to_series().diff().dropna().median()
+    if pd.isna(market_step):
+        market_step = price_max_fill
+    market_step = min(market_step, price_max_fill)
+    published_end = market.index[-1] + market_step
+    covered = target[target + step <= published_end]
+    minimum_periods = 1 if horizon_hours == 1 else 2
+    if len(covered) < minimum_periods:
+        raise CoverageError(
+            "Published electricity prices do not cover enough complete "
+            "control intervals; try again after the next publication."
+        )
+    if len(covered) < len(target):
+        logger.warning(
+            "Shortening the forecast horizon to %s complete intervals; "
+            "electricity prices are only published through %s.",
+            len(covered), published_end,
+        )
+    target = covered
     aligned_weather = align_weather(weather, target, weather_max_gap)
     aligned_price = pd.Series(
         [interval_price(market, stamp, step.total_seconds(), price_max_fill) for stamp in target],

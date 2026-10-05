@@ -132,6 +132,7 @@ class UpdateDialog(QtWidgets.QDialog):
             str(candidate.version) if candidate is not None else "—"
         )
         state = coordinator.state
+        checking = state is UpdateState.Checking
         downloading = state is UpdateState.Downloading
         installing = state in (UpdateState.Installing, UpdateState.Restarting)
         self._progress.setVisible(downloading)
@@ -145,18 +146,19 @@ class UpdateDialog(QtWidgets.QDialog):
                 translate(_PROGRESS_TEMPLATE).format(received=received, total=total)
             )
         cycle_running = coordinator.is_cycle_active()
-        self._check_button.setEnabled(not downloading and not installing)
+        self._check_button.setEnabled(not checking and not downloading and not installing)
         self._install_button.setVisible(status.can_install)
         self._install_button.setEnabled(
             status.can_install
             and candidate is not None
+            and not checking
             and not downloading
             and not coordinator.run_blocked()
             and not cycle_running
         )
         self._install_button.setDefault(
             status.can_install and candidate is not None
-            and not downloading and not installing
+            and not checking and not downloading and not installing
         )
         self._page_button.setVisible(not status.can_install)
         self._page_button.setDefault(not status.can_install)

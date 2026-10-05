@@ -205,6 +205,31 @@ def test_stable_does_not_follow_prereleases():
     assert selection.candidate is None
 
 
+@pytest.mark.parametrize("tag, flagged", [
+    ("v0.4.0", True), ("v0.4.0a1", False), ("v0.4.0rc1", True),
+])
+@pytest.mark.parametrize("with_appimage", [True, False])
+def test_stable_excludes_both_prerelease_markers(tag, flagged, with_appimage):
+    release = _release_item(tag, with_appimage=with_appimage)
+    release["prerelease"] = flagged
+    selection = updates.select_update([release], Version("0.3.0"), "x86_64")
+    assert selection.kind is updates.SelectionKind.UP_TO_DATE
+    assert selection.candidate is None
+    assert selection.note is None
+
+    stable = _release_item("v0.3.1")
+    selection = updates.select_update([release, stable], Version("0.3.0"), "x86_64")
+    assert selection.candidate.version == Version("0.3.1")
+
+
+def test_prerelease_install_follows_github_flagged_final_tag():
+    release = _release_item("v0.4.0")
+    release["prerelease"] = True
+    selection = updates.select_update([release], Version("0.3.0a1"), "x86_64")
+    assert selection.candidate.version == Version("0.4.0")
+    assert selection.candidate.prerelease is True
+
+
 def test_numeric_comparison_not_lexicographic():
     selection = _selection([[_release_item("v0.10.0")]], "0.9.0")
     assert selection.kind is updates.SelectionKind.AVAILABLE
@@ -526,6 +551,62 @@ def test_download_follows_supported_redirects(qtbot, fake_service, tmp_path):
     assert prepared[0].staging.read_bytes() == payload
 
 
+@pytest.mark.parametrize("role", ["check", "asset", "sums"])
+def test_redirect_response_bodies_are_not_payload(
+    qtbot, fake_service, tmp_path, monkeypatch, role,
+):
+    payload = b"verified payload"
+    digest = hashlib.sha256(payload).hexdigest()
+    paths = {
+        "check": "/fixtures/releases?per_page=100&page=1",
+        "asset": f"/fixtures/download/v0.4.0/{ASSET_NAME}",
+        "sums": "/fixtures/download/v0.4.0/SHA256SUMS",
+    }
+    bodies = {
+        "check": json.dumps(_release_payload(fake_service.base, payload)).encode(),
+        "asset": payload,
+        "sums": f"{digest}  {ASSET_NAME}\n".encode(),
+    }
+    fake_service.routes = {paths[key]: (200, body) for key, body in bodies.items()}
+    fake_service.routes["/final"] = (200, bodies[role])
+    fake_service.redirects = {
+        paths[role]: f"{fake_service.base}/redirect-again",
+        "/redirect-again": f"{fake_service.base}/final",
+    }
+    original_get = fake_service.do_GET
+
+    def get_with_redirect_body(handler):
+        location = fake_service.redirects.get(handler.path)
+        if location is None:
+            return original_get(handler)
+        body = b"<html>Redirecting</html>" * 100
+        handler.send_response(302)
+        handler.send_header("Location", location)
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+
+    monkeypatch.setattr(fake_service, "do_GET", get_with_redirect_body)
+    service = _local_service(fake_service.base)
+    failures = []
+    service.checkFailed.connect(failures.append)
+    service.downloadFailed.connect(failures.append)
+    if role == "check":
+        with qtbot.waitSignal(service.checkCompleted, timeout=10_000) as done:
+            assert service.check_now()
+        assert done.args[0].candidate.version == Version("0.4.0")
+    else:
+        progress = []
+        service.downloadProgress.connect(lambda received, _: progress.append(received))
+        with qtbot.waitSignal(service.downloadPrepared, timeout=10_000) as done:
+            assert service.download(_release(fake_service.base, payload), tmp_path / "Strom.AppImage")
+        assert done.args[0].staging.read_bytes() == payload
+        assert done.args[0].sha256 == digest
+        assert service.received == len(payload)
+        assert progress[-1] == len(payload)
+    assert failures == []
+
+
 def test_download_refuses_redirect_outside_supported_hosts(
     qtbot, fake_service, tmp_path
 ):
@@ -689,7 +770,7 @@ sys.exit(1)
 """
 
 
-def _coordinator(qtbot, tmp_path, target: Path, candidate: str):
+def _coordinator(qtbot, tmp_path, target: Path, candidate: str, *, service=None):
     from strom.linux_gui.app_identity import AppImageIdentity
     from strom.linux_gui.update_service import (
         UpdateCoordinator,
@@ -712,7 +793,7 @@ def _coordinator(qtbot, tmp_path, target: Path, candidate: str):
         save_preferences=lambda: saved.append(1),
         request_close=lambda: closed.append(1),
     )
-    service = UpdateService(
+    service = service or UpdateService(
         QCoreApplication.instance(),
         config=ServiceConfig(releases_url="http://127.0.0.1:1/releases"),
         current=Version("0.3.0"),
@@ -1146,6 +1227,151 @@ def test_check_then_download_can_recover_staged_transaction(
     assert not prepared.staging.exists()
     assert not transaction.backup.exists()
     assert not update_install.journal_path(target_path).exists()
+
+
+def test_install_during_recheck_does_not_block_heating(
+    qtbot, fake_service, tmp_path,
+):
+    from strom.linux_gui.update_dialog import UpdateDialog
+
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    service = _local_service(fake_service.base)
+    coordinator, blocks, _, _ = _coordinator(qtbot, tmp_path, target, "", service=service)
+    release = _release(fake_service.base, b"payload")
+    coordinator._on_check_completed(updates.Selection(updates.SelectionKind.AVAILABLE, release))
+    dialog = UpdateDialog(coordinator, lambda text: text)
+    qtbot.addWidget(dialog)
+    assert dialog._install_button.isEnabled()
+    fake_service.routes = {
+        "/fixtures/releases?per_page=100&page=1": (
+            200, json.dumps(_release_payload(fake_service.base, b"payload")).encode(),
+        ),
+    }
+    with qtbot.waitSignal(service.checkCompleted, timeout=3000):
+        assert coordinator.check(manual=True)
+        assert not dialog._install_button.isEnabled()
+        assert not dialog._install_button.isDefault()
+        assert not dialog._check_button.isEnabled()
+        assert not coordinator.accept_install(release)
+        assert coordinator.state is UpdateState.Checking
+        assert not coordinator.run_blocked()
+        assert blocks == []
+        assert not coordinator._lock.is_held()
+    assert coordinator.state is UpdateState.Available
+    assert dialog._install_button.isEnabled()
+
+
+@pytest.mark.parametrize("guard", ["state", "service"])
+def test_install_guards_check_state_and_service_busy_independently(
+    qtbot, fake_service, tmp_path, monkeypatch, guard,
+):
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    coordinator, blocks, _, _ = _coordinator(qtbot, tmp_path, target, "")
+    if guard == "state":
+        coordinator._set_state(UpdateState.Checking)
+    else:
+        monkeypatch.setattr(coordinator._service, "is_busy", lambda: True)
+    assert not coordinator.accept_install(_release(fake_service.base, b"payload"))
+    assert blocks == []
+    assert not coordinator._lock.is_held()
+
+
+@pytest.mark.parametrize("emits_failure", [True, False])
+def test_synchronous_download_rejection_settles_once_and_releases_lock(
+    qtbot, fake_service, tmp_path, monkeypatch, emits_failure,
+):
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    coordinator, blocks, _, _ = _coordinator(qtbot, tmp_path, target, "")
+    finished = []
+    coordinator.installFinished.connect(lambda ok, message: finished.append((ok, message)))
+
+    def reject(*_args):
+        assert coordinator._lock.is_held()
+        if emits_failure:
+            coordinator._service.downloadFailed.emit("specific rejection")
+        return False
+
+    monkeypatch.setattr(coordinator._service, "download", reject)
+    for attempt in range(2):
+        assert not coordinator.accept_install(_release(fake_service.base, b"payload"))
+        assert coordinator.state is UpdateState.Failed
+        assert not coordinator.run_blocked()
+        assert blocks[-2:] == [True, False]
+        assert len(finished) == attempt + 1
+        assert finished[-1][0] is False
+        if emits_failure:
+            assert "specific rejection" in coordinator.message
+        assert not coordinator._lock.is_held()
+        contender = update_install.FileLock(update_install.update_lock_path(target))
+        assert contender.acquire(exclusive=True)
+        contender.release()
+
+
+@pytest.mark.parametrize("outcome", ["cancel", "checksum_failure", "selftest_failure"])
+def test_second_window_recovery_preserves_live_download_and_transaction(
+    qtbot, fake_service, tmp_path, monkeypatch, outcome,
+):
+    target = tmp_path / "Strom.AppImage"
+    target.write_bytes(b"old")
+    payload = FAILING_SELFTEST.encode()
+    digest = hashlib.sha256(payload).hexdigest()
+    fake_service.routes = {
+        f"/fixtures/download/v0.4.0/{ASSET_NAME}": (200, payload),
+        "/fixtures/download/v0.4.0/SHA256SUMS": (
+            200,
+            f"{'0' * 64 if outcome == 'checksum_failure' else digest}  {ASSET_NAME}\n".encode(),
+        ),
+    }
+    service = _local_service(fake_service.base)
+    coordinator, blocks, _, _ = _coordinator(qtbot, tmp_path, target, "", service=service)
+    second, _, _, _ = _coordinator(qtbot, tmp_path, target, "")
+    original_prepare = update_install.prepare_transaction
+    prepared_checks = []
+
+    def prepare(*args):
+        # Verification handed staging to installation without unlocking.
+        assert coordinator._lock.is_held()
+        second.recover_startup()
+        assert args[2].read_bytes() == payload
+        transaction = original_prepare(*args)
+        second.recover_startup()
+        assert update_install.journal_path(target).exists()
+        assert transaction.backup.exists()
+        assert args[2].exists()
+        prepared_checks.append(True)
+        return transaction
+
+    monkeypatch.setattr(update_install, "prepare_transaction", prepare)
+    assert coordinator.accept_install(_release(fake_service.base, payload))
+    assert coordinator.run_blocked()
+    staging, = tmp_path.glob(".Strom.AppImage.staging-*")
+    assert not update_install.journal_path(target).exists()
+    second.recover_startup()
+    coordinator.recover_startup()  # re-entrant startup must not release its own lock
+    assert staging.exists()
+    assert coordinator._lock.is_held()
+    contender = update_install.FileLock(update_install.update_lock_path(target))
+    assert not contender.acquire(exclusive=False)
+    assert not contender.acquire(exclusive=True)
+    if outcome == "cancel":
+        assert coordinator.request_close() is None
+        assert coordinator.state is UpdateState.Idle
+    else:
+        qtbot.waitUntil(lambda: coordinator.state is UpdateState.Failed, timeout=10_000)
+    assert prepared_checks == ([True] if outcome == "selftest_failure" else [])
+    assert not staging.exists()
+    assert not update_install.journal_path(target).exists()
+    assert not list(tmp_path.glob(".Strom.AppImage.backup-*"))
+    assert target.read_bytes() == b"old"
+    assert blocks == [True, False]
+    assert not coordinator.run_blocked()
+    assert contender.acquire(exclusive=True)
+    contender.release()
+    second.recover_startup()
+    assert second._updates_refused is None
 
 
 @pytest.mark.parametrize("operation", ["check", "download"])

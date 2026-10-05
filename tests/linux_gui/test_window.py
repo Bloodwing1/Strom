@@ -80,6 +80,59 @@ def allow_run(window, monkeypatch, *, repeat: bool = False) -> None:
     window._refresh_controls()
 
 
+def test_native_menu_actions_follow_run_and_update_guards(make_window, monkeypatch):
+    window = make_window()
+    assert not window._start_action.isEnabled()
+    allow_run(window, monkeypatch)
+    assert window._start_action.isEnabled()
+    window._set_update_run_block(True)
+    assert not window._start_action.isEnabled()
+    assert not window._accounts_action.isEnabled()
+    assert not window._repeat_action.isEnabled()
+    window._set_update_run_block(False)
+    assert window._start_action.isEnabled()
+
+
+def test_repeat_can_be_disabled_without_interrupting_active_run(make_window, monkeypatch):
+    window = make_window()
+    allow_run(window, monkeypatch, repeat=True)
+    monkeypatch.setattr(window._runner, "is_active", lambda: True)
+    window._refresh_controls()
+    assert window._repeat_checkbox.isEnabled()
+    assert window._repeat_action.isChecked()
+    window._repeat_timer.start(10_000)
+    window._repeat_action.trigger()
+    assert not window._repeat_checkbox.isChecked()
+    assert not window._repeat_timer.isActive()
+    assert window._runner.is_active()
+    # Restore before the fixture closes the window: no active real child.
+    monkeypatch.setattr(window._runner, "is_active", lambda: False)
+
+
+def test_activity_menu_opens_the_log_and_stays_in_sync(make_window):
+    window = make_window()
+    window._activity_action.trigger()
+    assert window._pages.currentIndex() == 1
+    assert window._details_toggle.isChecked()
+    assert not window._details.isHidden()
+    window._details_toggle.setChecked(False)
+    assert not window._activity_action.isChecked()
+
+
+def test_last_report_survives_the_next_run_and_retranslates(make_window):
+    window = make_window()
+    report = {"on_seconds": 1920, "interval_seconds": 3600, "estimated_cost_eur": .14}
+    window._last_run.set_report(report)
+    window._on_runner_state(RunnerState.Starting)
+    assert window._last_run._on_value.text() == "32 min"
+    window._language.setCurrentIndex(1)
+    assert window._last_run.title() == "Último ciclo completado"
+    assert window._heating_menu.title() == "Calefacción"
+    assert "estimación" in window._last_run._note.text()
+    window._language.setCurrentIndex(0)
+    assert window._last_run.title() == "Last completed run"
+
+
 # --- initial controls: plain-language UI ---
 
 
@@ -1567,6 +1620,23 @@ def test_plug_test_button_uses_saved_credentials(
     assert "PASSWORD=" not in stored
     assert "EMAIL=" not in stored
     assert window._current_setup_status().tapo_verified
+
+
+def test_plug_test_uses_exported_derived_credentials(make_window, tmp_path, monkeypatch):
+    from strom.plug import PlugCredentials
+
+    proof = '{"host": "192.168.1.9", "credentials_hash": "env-proof"}'
+    monkeypatch.setenv("DEVICEIP", "192.168.1.9")
+    monkeypatch.setenv("PLUG_CONFIG", proof)
+    window = make_window()
+    window._config_dir_edit.setText(str(tmp_path))
+    window._tapo_ip.clear()
+    seen = []
+    monkeypatch.setattr(window._checker, "check_plug", seen.append)
+
+    window._on_test_tapo()
+
+    assert seen == [PlugCredentials(device_ip="192.168.1.9", plug_config=proof)]
 
 
 def test_plug_test_without_account_persists_only_the_proof(

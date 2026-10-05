@@ -363,13 +363,16 @@ def test_update_lock_excludes_a_second_transaction(tmp_path):
 
 
 def test_locks_die_with_the_owning_process(tmp_path):
-    """A killed holder releases the lock (flock semantics)."""
+    """A killed downloader releases its lock, making orphan cleanup safe."""
     target = _fake_appimage(tmp_path / "Strom.AppImage")
     path = update_install.update_lock_path(target)
+    staging = tmp_path / ".Strom.AppImage.staging-interrupted"
     probe = (
         "import fcntl, os, sys, time\n"
+        "from pathlib import Path\n"
         f"fd = os.open({str(path)!r}, os.O_RDWR | os.O_CREAT, 0o600)\n"
         "fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+        f"Path({str(staging)!r}).write_bytes(b'partial download')\n"
         "print('held', flush=True)\n"
         "time.sleep(30)\n"
     )
@@ -384,6 +387,8 @@ def test_locks_die_with_the_owning_process(tmp_path):
         assert child.stdout.readline().strip() == "held"
         lock = update_install.FileLock(path)
         assert lock.acquire(exclusive=True) is False
+        assert staging.read_bytes() == b"partial download"
+        assert not update_install.journal_path(target).exists()
         child.kill()
         child.wait(timeout=10)
         deadline = 50
@@ -391,7 +396,12 @@ def test_locks_die_with_the_owning_process(tmp_path):
             deadline -= 1
             time.sleep(0.05)
         assert lock.is_held()
-        lock.release()
+        try:
+            assert update_install.recover(_identity(target)) is None
+            assert not staging.exists()
+            assert target.exists()
+        finally:
+            lock.release()
     finally:
         if child.poll() is None:
             child.kill()

@@ -9,8 +9,9 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6 import QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
+from strom.linux_gui.dashboard import LastRunCard, RunSummary
 from strom.linux_gui.runner import RunnerState, make_launch_spec
 from strom.linux_gui.ui_text import (
     _CLOSE_REFUSED_TEXT,
@@ -30,7 +31,7 @@ from strom.linux_gui.ui_text import (
     _RUNNER_LABELS,
     _RUN_BLOCKED_TEXT,
 )
-from strom.linux_gui.theme import repolish
+from strom.linux_gui.theme import WarmthDrawing, disclosure, repolish
 from strom.linux_gui.window_base import WindowBase
 
 
@@ -40,8 +41,8 @@ class RunPaneMixin(WindowBase):
         group.setObjectName("heatingCard")
         group.setTitle("")
         layout = QtWidgets.QVBoxLayout(group)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(11)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
 
         heating_header = QtWidgets.QHBoxLayout()
         heating_label = QtWidgets.QLabel("Your heating", group)
@@ -54,19 +55,27 @@ class RunPaneMixin(WindowBase):
         heating_header.addWidget(self._edit_setup)
         layout.addLayout(heating_header)
 
+        hero = QtWidgets.QHBoxLayout()
+        hero.setSpacing(20)
+        status = QtWidgets.QVBoxLayout()
+        status.setSpacing(8)
+        hero.addLayout(status, 1)
+        hero.addWidget(WarmthDrawing(group), alignment=QtCore.Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(hero)
+
         self._status_label = QtWidgets.QLabel(
             self._translated(_RUNNER_LABELS[RunnerState.Idle]), group
         )
         self._status_label.setAccessibleName("Cycle status")
         self._status_label.setObjectName("cycleStatus")
         self._status_label.setWordWrap(True)
-        layout.addWidget(self._status_label)
+        status.addWidget(self._status_label)
 
         self._status_detail = QtWidgets.QLabel("", group)
         self._status_detail.setWordWrap(True)
         self._status_detail.setProperty("statusKind", "detail")
         self._status_detail.setVisible(False)
-        layout.addWidget(self._status_detail)
+        status.addWidget(self._status_detail)
 
         self._busy = QtWidgets.QProgressBar(group)
         self._busy.setAccessibleName("Cycle progress")
@@ -78,7 +87,8 @@ class RunPaneMixin(WindowBase):
         self._checklist_label.setAccessibleName("Setup checklist")
         self._checklist_label.setObjectName("checklist")
         self._checklist_label.setWordWrap(True)
-        layout.addWidget(self._checklist_label)
+        status.addWidget(self._checklist_label)
+        status.addStretch(1)
 
         chips = QtWidgets.QHBoxLayout()
         chips.setSpacing(8)
@@ -111,16 +121,32 @@ class RunPaneMixin(WindowBase):
         self._run_button.setObjectName("primaryAction")
         self._run_button.setDefault(True)
         self._run_button.clicked.connect(self._on_run_clicked)
-        layout.addWidget(self._run_button)
+        action_row = QtWidgets.QHBoxLayout()
+        self._run_button.setMinimumHeight(self._run_button.sizeHint().height() + 10)
+        action_row.addWidget(self._run_button)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
 
         self._repeat_checkbox = QtWidgets.QCheckBox(
             "Keep running automatically", group
         )
         self._repeat_checkbox.setToolTip(_REPEAT_HELP_TEXT)
+        self._repeat_checkbox.toggled.connect(self._on_repeat_toggled)
         layout.addWidget(self._repeat_checkbox)
+        self._repeat_note = QtWidgets.QLabel(
+            "Turning this off won't interrupt the current run.", group
+        )
+        self._repeat_note.setWordWrap(True)
+        layout.addWidget(self._repeat_note)
 
-        self._options_toggle = QtWidgets.QCheckBox("More options", group)
-        layout.addWidget(self._options_toggle)
+        self._last_run = LastRunCard(group)
+        layout.addWidget(self._last_run)
+
+        tools = QtWidgets.QHBoxLayout()
+        tools.setSpacing(12)
+        self._options_toggle = disclosure("More options", group)
+        tools.addWidget(self._options_toggle)
+        layout.addLayout(tools)
         options = QtWidgets.QWidget(group)
         option_form = QtWidgets.QFormLayout(options)
         option_form.setContentsMargins(0, 0, 0, 0)
@@ -146,10 +172,9 @@ class RunPaneMixin(WindowBase):
         self._options_toggle.toggled.connect(options.setVisible)
         options.hide()
 
-        self._details_toggle = QtWidgets.QCheckBox(
-            "Show technical details", group
-        )
-        layout.addWidget(self._details_toggle)
+        self._details_toggle = disclosure("Show technical details", group)
+        tools.addWidget(self._details_toggle)
+        tools.addStretch(1)
         self._details = QtWidgets.QWidget(group)
         details = QtWidgets.QVBoxLayout(self._details)
         details.setContentsMargins(0, 0, 0, 0)
@@ -240,6 +265,10 @@ class RunPaneMixin(WindowBase):
             self._elapsed_timer.start()
             self._set_detail("")
 
+    def _on_repeat_toggled(self, checked: bool) -> None:
+        if not checked:
+            self._repeat_timer.stop()
+
     def _start_repeat(self) -> None:
         if self._repeat_checkbox.isChecked():
             self._start_cycle(confirm=False)
@@ -266,18 +295,14 @@ class RunPaneMixin(WindowBase):
         return payload if isinstance(payload, dict) else None
 
     def _summary_text(self, report: dict | None) -> str:
-        if not report:
-            return ""
-        try:
-            on_minutes = round(float(report["on_seconds"]) / 60.0)
-            interval_minutes = round(float(report["interval_seconds"]) / 60.0)
-        except (KeyError, TypeError, ValueError):
+        summary = RunSummary.from_report(report)
+        if summary is None:
             return ""
         text = self._translated(
             "Heater on for {on} of {interval} minutes."
-        ).format(on=on_minutes, interval=interval_minutes)
-        cost = report.get("estimated_cost_eur")
-        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        ).format(on=round(summary.on_seconds / 60), interval=round(summary.interval_seconds / 60))
+        cost = summary.cost
+        if cost is not None:
             text += " " + self._translated(
                 "Estimated cost: {cost} EUR."
             ).format(cost=f"{float(cost):.2f}")
@@ -353,6 +378,7 @@ class RunPaneMixin(WindowBase):
         summary = ""
         report = self._read_report()
         if state is RunnerState.Completed:
+            self._last_run.set_report(report)
             summary = self._summary_text(report)
         if self._repeat_checkbox.isChecked():
             if state is RunnerState.Completed:

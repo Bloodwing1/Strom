@@ -329,9 +329,9 @@ def _check_solution(values: dict, house: House, Ad: np.ndarray,
         )
     # Dynamic residual: x[k+1] must equal the ZOH prediction.
     predicted = (Ad @ X[:, :-1]
-                 + np.outer(Bd[:, 0], u[:-1])
-                 + np.outer(Bd[:, 1], c[:-1])
-                 + np.outer(Bd[:, 2], T_exterior[:-1]))
+                 + np.outer(Bd[:, 0], u)
+                 + np.outer(Bd[:, 1], c)
+                 + np.outer(Bd[:, 2], T_exterior))
     residual = np.abs(predicted - X[:, 1:])
     scale = np.maximum(1.0, np.abs(X[:, :-1]))
     if (residual / scale > DYNAMICS_TOL).any():
@@ -359,7 +359,9 @@ def find_heating_output(temp_price_df: pd.DataFrame,
     Returns:
         DataFrame with the schedule: 'HeaterOutput', 'CoolingOutput',
         'InteriorTemperature', 'WallTemperature' and a 'Cost' column equal to
-        ``Price * dt * (Q_heater * u + Q_cooling * c)``.
+        ``Price * dt * (Q_heater * u + Q_cooling * c)``. Temperatures
+        describe the start of each interval; the final interval's end state
+        is constrained and validated internally but is not an extra row.
 
     Raises:
         InvalidInputError: malformed or non-finite input.
@@ -395,7 +397,7 @@ def find_heating_output(temp_price_df: pd.DataFrame,
 
     heater_output = cp.Variable(time_steps, name="HeaterOutput")
     cooling_output = cp.Variable(time_steps, name="CoolingOutput")
-    T = cp.Variable((2, time_steps), name="T")
+    T = cp.Variable((2, time_steps + 1), name="T")
 
     constraints = [
         heater_output >= 0.0, heater_output <= 1.0,
@@ -406,7 +408,7 @@ def find_heating_output(temp_price_df: pd.DataFrame,
 
     A, B = _build_dynamics_matrices(house)
     Ad, Bd = zero_order_hold_matrices(A, B, dt)
-    for t in range(time_steps - 1):
+    for t in range(time_steps):
         constraints.append(
             T[:, t + 1] == Ad @ T[:, t]
             + Bd[:, 0] * heater_output[t]
@@ -423,8 +425,8 @@ def find_heating_output(temp_price_df: pd.DataFrame,
         dt * (house.Q_heater * heater_output
               + house.Q_cooling * cooling_output)))
     obj_temp = cp.sum(
-        cp.abs(T[0, :] - (T_target - T_differential))
-        + cp.abs(T[0, :] - (T_target + T_differential)))
+        cp.abs(T[0, 1:] - (T_target - T_differential))
+        + cp.abs(T[0, 1:] - (T_target + T_differential)))
 
     tau = 0.01
     if heating_mode == "optimal":
@@ -473,8 +475,8 @@ def find_heating_output(temp_price_df: pd.DataFrame,
 
     state_df['HeaterOutput'] = np.clip(values["HeaterOutput"], 0.0, 1.0)
     state_df['CoolingOutput'] = np.clip(values["CoolingOutput"], 0.0, 1.0)
-    state_df['InteriorTemperature'] = values["_T"][0, :]
-    state_df['WallTemperature'] = values["_T"][1, :]
+    state_df['InteriorTemperature'] = values["_T"][0, :-1]
+    state_df['WallTemperature'] = values["_T"][1, :-1]
     state_df['Cost'] = (
         state_df['Price'] * dt
         * (state_df['HeaterOutput'] * house.Q_heater

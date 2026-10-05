@@ -22,7 +22,24 @@ from strom.errors import (
     SolverError,
 )
 
-from .conftest import make_schedule
+from .conftest import ManualClock, make_schedule
+
+
+@pytest.fixture(autouse=True)
+def passive_manual_clock_watchdog(monkeypatch):
+    import strom.controller as controller
+
+    real_factory = controller._make_watchdog
+
+    def make_watchdog(deps, plug):
+        watchdog = real_factory(deps, plug)
+        # ManualClock.sleep advances shared time, unlike a real concurrent sleep.
+        # Test its polling independently in test_actuation, not as a second clock driver.
+        if isinstance(deps.clock, ManualClock):
+            monkeypatch.setattr(watchdog, "start", lambda: None)
+        return watchdog
+
+    monkeypatch.setattr(controller, "_make_watchdog", make_watchdog)
 
 
 def _creds(device_ip="1.2.3.4", email="e", password="p"):
@@ -83,7 +100,7 @@ class TestHappyPath:
 
         async def record(plug, plan, clock, watchdog):
             executed.append(plan)
-            await real_execute(plug, plan, clock, watchdog)
+            return await real_execute(plug, plan, clock, watchdog)
 
         monkeypatch.setattr(controller, "execute_plan", record)
         deps = make_deps(plug, clock, fetch=lambda: data,
@@ -119,7 +136,7 @@ class TestHappyPath:
     async def test_full_cycle(self, plug, clock):
         deps = make_deps(plug, clock)
         await run_control_cycle(deps, _creds(), house=None)
-        assert plug.calls[:2] == ["turn_on", "turn_off"]
+        assert plug.calls[:3] == ["turn_on", "update", "turn_off"]
         assert plug.calls[-3:] == ["turn_off", "update", "async_close"]
         assert plug.calls.count("async_close") == 1
 
@@ -134,6 +151,58 @@ class TestHappyPath:
         deps = make_deps(plug, clock, fetch=lambda: make_schedule([0.0]))
         await run_control_cycle(deps, _creds(), house=None)
         assert "turn_on" not in plug.calls
+
+    @pytest.mark.parametrize("duty, expected_on, expected_elapsed", [
+        (.5, 1825., 3625.), (1., 3625., 3625.), (0., 25., 3625.),
+    ])
+    async def test_measured_durations_feed_report_cost_and_persistence(
+        self, plug, clock, tmp_path, monkeypatch, duty, expected_on, expected_elapsed,
+    ):
+        import json
+        import strom.controller as controller
+        from strom.control import ActuationPlan, ActuationSegment
+        from strom.optimization_utils import House
+        from strom.thermal_state import plan_temperature
+
+        house = House()
+        original_on, original_off, original_update = plug.turn_on, plug.turn_off, plug.update
+
+        async def delayed_on():
+            clock.advance(10)
+            await original_on()
+
+        async def delayed_off():
+            clock.advance(20)
+            await original_off()
+
+        async def delayed_update():
+            clock.advance(5)
+            await original_update()
+
+        plug.turn_on, plug.turn_off, plug.update = delayed_on, delayed_off, delayed_update
+        deps = make_deps(plug, clock, fetch=lambda: make_schedule([duty]))
+        deps.state_path = tmp_path / "state.json"
+        captured = []
+        original_temperature = controller.plan_temperature
+
+        def capture(house, exterior, plan):
+            captured.append(plan)
+            return original_temperature(house, exterior, plan)
+
+        monkeypatch.setattr(controller, "plan_temperature", capture)
+        report = await run_control_cycle(deps, _creds(), house)
+        expected = ActuationPlan((
+            ActuationSegment(True, expected_on),
+            ActuationSegment(False, expected_elapsed - expected_on),
+        ), expected_elapsed)
+        assert report.on_seconds == pytest.approx(expected_on)
+        assert report.interval_seconds == pytest.approx(expected_elapsed)
+        assert report.estimated_cost_eur == pytest.approx(.1 * house.Q_heater * expected_on / 3600)
+        assert captured[0].interval_seconds == pytest.approx(expected_elapsed)
+        saved = json.loads(deps.state_path.read_text())
+        assert (saved["interior"], saved["wall"]) == pytest.approx(
+            plan_temperature(house, 10., expected)
+        )
 
 
 class TestDiscovery:
@@ -269,6 +338,53 @@ class TestFailureInjection:
             await task
         assert plug.is_on is False
         assert plug.closed == 1
+
+    async def test_unverified_execution_removes_state_instead_of_saving_nominal(
+        self, plug, clock, tmp_path, monkeypatch,
+    ):
+        from strom.optimization_utils import House
+        from strom.thermal_state import save_state
+
+        deps = make_deps(plug, clock)
+        deps.state_path = tmp_path / "state.json"
+        save_state(deps.state_path, House(), _creds().device_ip, (18., 18.))
+        original_off = plug.turn_off
+        attempts = 0
+
+        async def ignored_once():
+            nonlocal attempts
+            attempts += 1
+            if attempts > 1:
+                await original_off()
+
+        plug.turn_off = ignored_once
+        with pytest.raises(DeviceError, match="confirm.*OFF"):
+            await run_control_cycle(deps, _creds(), House())
+        assert not deps.state_path.exists()
+        assert plug.is_on is False
+        assert plug.closed == 1
+
+    async def test_watchdog_intervention_during_shutdown_does_not_save_state(
+        self, plug, clock, tmp_path, monkeypatch,
+    ):
+        import strom.controller as controller
+        from strom.optimization_utils import House
+
+        deps = make_deps(plug, clock, fetch=lambda: make_schedule([1.]))
+        deps.state_path = tmp_path / "state.json"
+        watchdog = controller._make_watchdog(deps, plug)
+        monkeypatch.setattr(controller, "_make_watchdog", lambda deps, plug: watchdog)
+        original_off = plug.turn_off
+
+        async def off_after_trip():
+            watchdog.tripped = True
+            await original_off()
+
+        plug.turn_off = off_after_trip
+        with pytest.raises(DeviceError, match="watchdog interrupted"):
+            await run_control_cycle(deps, _creds(), House())
+        assert not deps.state_path.exists()
+        assert plug.is_on is False
 
     async def test_shutdown_retries_a_transient_off_failure(self, plug, clock, monkeypatch):
         import strom.controller as controller

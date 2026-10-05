@@ -30,13 +30,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Protocol
 
 import pandas as pd
 
-from .errors import InvalidScheduleError
+from .errors import DeviceError, InvalidScheduleError
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ MIN_PULSE_SECONDS = 60.0
 MAX_ON_SECONDS_DEFAULT = 3 * 3600.0
 
 REQUIRED_OUTPUT_COLUMN = "HeaterOutput"
+COMMAND_TIMEOUT_SECONDS = 10.0
 
 
 class Clock(Protocol):
@@ -104,10 +106,13 @@ def resolve_actuation(
             or if the interval is not positive.
     """
     interval_seconds = float(interval_seconds)
-    if not interval_seconds > 0.0:
+    if not math.isfinite(interval_seconds) or not interval_seconds > 0.0:
         raise InvalidScheduleError(
             f"Control interval must be positive, got {interval_seconds!r}."
         )
+
+    if not math.isfinite(min_pulse_seconds) or min_pulse_seconds <= 0:
+        raise InvalidScheduleError("Minimum pulse duration must be finite and positive.")
 
     value = float(output)
     if value != value:  # NaN
@@ -184,18 +189,71 @@ async def execute_plan(
     plan: ActuationPlan,
     clock: Clock,
     watchdog: MaxOnWatchdog | None = None,
-) -> None:
-    """Execute a plan by switching the plug and sleeping between segments."""
+) -> ActuationPlan:
+    """Execute against monotonic deadlines and return an elapsed-time estimate.
+
+    A relay has no transition timestamp: conservatively count ON from the ON
+    request until OFF is verified, including command latency. An initially
+    unknown state is also counted as ON until verified OFF. Failed verification
+    or watchdog intervention invalidates the estimate rather than returning the
+    nominal plan. The caller must account for final shutdown if we end ON.
+    """
+    started = last = clock.monotonic()
+    deadline = started
+    on = getattr(plug, "is_on", None) is not False
+    measured: list[ActuationSegment] = []
+    if on and watchdog is not None:
+        watchdog.notify_on()
+
+    def record() -> None:
+        nonlocal last
+        now = clock.monotonic()
+        if now > last:
+            measured.append(ActuationSegment(on, now - last))
+        last = now
+
+    def check_watchdog() -> None:
+        if watchdog is not None and watchdog.tripped:
+            raise DeviceError("The max-on watchdog interrupted actuation; estimate discarded.")
+
     for segment in plan.segments:
+        deadline += segment.seconds
+        check_watchdog()
+        # Never start a pulse whose entire window has already elapsed.
+        if segment.on and clock.monotonic() >= deadline:
+            continue
         if segment.on:
+            record()
+            on = True
             if watchdog is not None:
                 watchdog.notify_on()
-            await plug.turn_on()
+            async with asyncio.timeout(COMMAND_TIMEOUT_SECONDS):
+                await plug.turn_on()
+                await plug.update()
+                if getattr(plug, "is_on", None) is not True:
+                    raise DeviceError("The smart plug did not confirm that it is ON.")
         else:
-            await plug.turn_off()
+            await verified_off(plug)
+            record()
+            on = False
             if watchdog is not None:
                 watchdog.notify_off()
-        await clock.sleep(segment.seconds)
+        check_watchdog()
+        remaining = deadline - clock.monotonic()
+        if remaining > 0:
+            await clock.sleep(remaining)
+        check_watchdog()
+    record()
+    return ActuationPlan(tuple(measured), last - started)
+
+
+async def verified_off(plug) -> None:
+    """Only a refreshed OFF state is sufficient to clear a safety timer."""
+    async with asyncio.timeout(COMMAND_TIMEOUT_SECONDS):
+        await plug.turn_off()
+        await plug.update()
+        if getattr(plug, "is_on", None) is not False:
+            raise DeviceError("The smart plug did not confirm that it is OFF.")
 
 
 class MaxOnWatchdog:
@@ -215,8 +273,10 @@ class MaxOnWatchdog:
         clock: Clock | None = None,
         poll_seconds: float = 30.0,
     ) -> None:
-        if not max_on_seconds > 0.0:
-            raise ValueError("max_on_seconds must be positive.")
+        if not math.isfinite(max_on_seconds) or max_on_seconds <= 0:
+            raise ValueError("max_on_seconds must be finite and positive.")
+        if not math.isfinite(poll_seconds) or poll_seconds <= 0:
+            raise ValueError("poll_seconds must be finite and positive.")
         self._plug = plug
         self._max_on_seconds = float(max_on_seconds)
         self._clock: Clock = clock or SystemClock()
@@ -224,6 +284,7 @@ class MaxOnWatchdog:
         self._on_since: float | None = None
         self._task: asyncio.Task | None = None
         self._stopped = False
+        self.tripped = False
 
     @property
     def on_seconds_elapsed(self) -> float:
@@ -252,7 +313,7 @@ class MaxOnWatchdog:
             self._on_since = self._clock.monotonic()
 
     def notify_off(self) -> None:
-        """Report that the plug was switched OFF."""
+        """Report a refreshed, verified OFF state, not merely an OFF request."""
         self._on_since = None
 
     async def _run(self) -> None:
@@ -268,8 +329,9 @@ class MaxOnWatchdog:
                         "forcing plug OFF.",
                         self.on_seconds_elapsed,
                     )
-                    await self._plug.turn_off()
-                    self._on_since = None
+                    self.tripped = True
+                    await verified_off(self._plug)
+                    self.notify_off()
             except asyncio.CancelledError:
                 raise
             except Exception:  # defensive: the watchdog must never die silently
