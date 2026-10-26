@@ -222,7 +222,8 @@ class MainWindow(
         self._activity_action = self._view_menu.addAction("Show technical details")
         self._activity_action.setCheckable(True)
         self._activity_action.setShortcut("Ctrl+L")
-        self._activity_action.toggled.connect(self._show_activity)
+        self._activity_action.toggled.connect(self._details_toggle.setChecked)
+        self._activity_action.triggered.connect(self._show_activity)
         self._details_toggle.toggled.connect(self._activity_action.setChecked)
         self._help_menu = menu_bar.addMenu("Help")
         self._check_updates_action = self._help_menu.addAction("Check for updates")
@@ -254,7 +255,6 @@ class MainWindow(
             apply_typography(self)
 
     def _show_activity(self, visible: bool) -> None:
-        self._details_toggle.setChecked(visible)
         if visible:
             self._pages.setCurrentIndex(1)
             self._log.setFocus()
@@ -470,7 +470,7 @@ class MainWindow(
         # This changes only the next run; never interrupts the owned child.
         self._repeat_checkbox.setEnabled(not update_block and setup_ready)
         self._repeat_action.setEnabled(not update_block and setup_ready)
-        self._repeat_note.setVisible(cycle_active)
+        self._repeat_note.setVisible(cycle_active and self._repeat_checkbox.isChecked())
         self._checklist_label.setVisible(not cycle_active)
         self._finish_setup_button.setVisible(not setup_ready)
         self._finish_setup_button.setEnabled(allow)

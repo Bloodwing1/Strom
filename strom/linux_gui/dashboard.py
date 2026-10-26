@@ -29,17 +29,17 @@ class RunSummary:
         if not (math.isfinite(on) and math.isfinite(interval) and 0 <= on <= interval
                 and interval > 0):
             return None
-        cost = report.get("estimated_cost_eur")
-        try:
-            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
-                cost = float(cost)
-            else:
-                cost = None
-            if cost is not None and not math.isfinite(cost):
-                cost = None
-        except OverflowError:
-            cost = None
-        return cls(on, interval, cost)
+        return cls(on, interval, _finite(report.get("estimated_cost_eur")))
+
+
+def _finite(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        value = float(value)
+    except OverflowError:
+        return None
+    return value if math.isfinite(value) else None
 
 
 class LastRunCard(QtWidgets.QGroupBox):
@@ -77,7 +77,6 @@ class LastRunCard(QtWidgets.QGroupBox):
         self._share = QtWidgets.QProgressBar(self)
         self._share.setRange(0, 1000)
         self._share.setTextVisible(False)
-        self._share.setAccessibleName("Reported heater on-time")
         layout.addWidget(self._share)
         self._note = QtWidgets.QLabel(self)
         self._note.setWordWrap(True)

@@ -266,6 +266,7 @@ class RunPaneMixin(WindowBase):
             self._set_detail("")
 
     def _on_repeat_toggled(self, checked: bool) -> None:
+        self._repeat_note.setVisible(checked and self._runner.is_active())
         if not checked:
             self._repeat_timer.stop()
 
@@ -301,11 +302,10 @@ class RunPaneMixin(WindowBase):
         text = self._translated(
             "Heater on for {on} of {interval} minutes."
         ).format(on=round(summary.on_seconds / 60), interval=round(summary.interval_seconds / 60))
-        cost = summary.cost
-        if cost is not None:
+        if summary.cost is not None:
             text += " " + self._translated(
                 "Estimated cost: {cost} EUR."
-            ).format(cost=f"{float(cost):.2f}")
+            ).format(cost=f"{summary.cost:.2f}")
         return text
 
     def _tick_elapsed(self) -> None:
